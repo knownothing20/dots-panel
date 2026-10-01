@@ -69,3 +69,9 @@ class NotificationTests(unittest.TestCase):
         s['schedules']=[{'id':f's{n}','platform_observation':{'last_run_at':'2026-10-01T00:00:00Z'}} for n in range(2200)]
         m=NotificationState();m.update(s);self.assertFalse(m.update(s)['changed'])
         s['agents'][0]['status']='idle';self.assertEqual(m.update(s)['changed'],{'agents'});self.assertFalse(m.update(s)['changed'])
+
+    def test_notification_keeps_shared_profile_portrait_fields(self):
+        s=state();m=NotificationState();m.update(s);s['runs']=[{'id':'r','task_id':'t','status':'running'}]
+        person={'id':'a','name':'Example','name_en':'Example EN','avatar':'mint','portrait':'bloom-mint','portrait_spec':{'key':'bloom-mint','shapes':[]},'note':'Not needed in a notification'}
+        s['agents']=[person];s['agent_run_assignments']=[{'run_id':'r','agent_id':'a'}];m.update(s)
+        self.assertEqual(m.cards[0]['agent_record']['portrait'],person['portrait']);self.assertEqual(m.cards[0]['agent_record']['portrait_spec'],person['portrait_spec']);self.assertNotIn('note',m.cards[0]['agent_record'])

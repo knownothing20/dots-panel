@@ -84,7 +84,7 @@ def agent_observation(agent, snapshot, now=None):
     now = time.time() if now is None else now
     observed = (agent or {}).get('observed_at')
     known = isinstance(observed, (int, float)) and not isinstance(observed, bool) and math.isfinite(observed)
-    return {'known': known, 'recent': known and 0 <= now-observed <= snapshot.get('stale_after_seconds', 120),
+    return {'known': known, 'recent': known and (agent or {}).get('identity_verification') != 'historical' and 0 <= now-observed <= snapshot.get('stale_after_seconds', 120),
             'status': agent.get('status', 'unknown') if agent and known else 'unknown'}
 
 

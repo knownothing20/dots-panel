@@ -24,31 +24,21 @@ const run={id:'new',task_id:'one',started:2,status:'waiting_user',lifecycle_reas
 const state={tasks:[task,task],runs:[{...run,id:'old',started:1,status:'succeeded'},run,run]};
 assert.equal(PanelWorkspace.attention(state).action_required.length,1);
 assert.equal(PanelWorkspace.attention({tasks:[],runs:[]}).action_required.length,0);
-renderAttention(state);
-const container=$('needs-attention'),row=container.children[2];
-assert.equal(row.children[0].textContent,'<script>Literal title</script> · Waiting for user');
-assert.ok(row.children[3].textContent.includes('Older record'));
-let opened=null;selectTask=(task,advice=false)=>{opened={id:task.id,advice};};
-const actions=row.children[4];
-assert.equal(actions.children[0].tag,'button');assert.equal(actions.children[0].type,'button');
-actions.children[0].listeners.click();assert.equal(opened.id,'one');assert.equal(opened.advice,true);
-actions.children[1].listeners.click();assert.equal(opened.advice,false);
+assert.equal(typeof renderAttention,'undefined');
 adviceTaskId='one';renderAdvice(task,run);
 assert.equal($('attention-advice').hidden,false);assert.ok($('advice-text').value.includes('[please fill in]'));
 assert.ok($('advice-note').textContent.includes('nothing has been sent'));
 let prevented=false;$('advice-text').listeners.keydown({key:'Escape',preventDefault(){prevented=true;}});
 assert.equal(prevented,true);assert.equal($('attention-advice').hidden,true);assert.equal(document.activeElement,$('back-conversations'));
-renderAttention(state);assert.equal(container.children.length,3);
-renderAttention({...state,latest_runs:[{...run,status:'succeeded'}]});assert.ok(container.children[2].textContent.includes('No recorded'));
-const external={...state,latest_runs:[{...run,status:'waiting_external'}]};renderAttention(external);
+const external={...state,latest_runs:[{...run,status:'waiting_external'}]};
 assert.equal(PanelWorkspace.attention(external).action_required.length,0);
 assert.equal(PanelWorkspace.attention(external).external.length,1);
-assert.equal(container.children[3].tag,'details');assert.ok(container.children[3].children[0].textContent.includes('informational'));
-language='zh';renderAttention(state);assert.equal(container.children[0].textContent,'需要你处理');
+language='zh';
 adviceTaskId='one';renderAdvice(task,run);assert.ok($('advice-text').value.includes('[请填写]'));
 renderAdvice(task,{...run,status:'running'});assert.equal($('attention-advice').hidden,true);assert.equal($('advice-text').value,'');
 `,context);
-console.log('Attention queue, latest-only deduplication, safe text, bilingual suggestions, details actions, repeated refresh and Escape focus passed');
+assert.ok(!fs.readFileSync('web/index.html','utf8').includes('id="needs-attention"'));
+console.log('Homepage attention block removed; lifecycle queue, safe bilingual detail suggestions and Escape focus preserved');
 
 vm.runInContext(`
 const artifact={id:'file',title:'<script>Final literal</script>',sha256:'hash',designation:'final',delivery_observations:[{status:'accepted',sha256:'hash'}]};

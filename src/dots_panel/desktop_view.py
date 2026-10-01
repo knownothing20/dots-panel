@@ -10,6 +10,7 @@ from .doctor import doctor_rows
 from .notifications import NotificationState
 from .native_notifications import NativeNotifications
 from .progress import task_progress, current_run, task_meaningful_updated, agent_observation
+from .agent_identity import draw_portrait, identity_label, source_label
 from .app import artifact_delivery_label, verification_label, attention_items, attention_draft, artifact_kind_label, VERSION, verified_repository_url, verified_link, skill_origin_label, skill_publication_label
 from contextlib import contextmanager
 import json
@@ -1461,44 +1462,9 @@ class Dashboard:
         card.bind("<Return>", lambda event: self.navigate("schedules"))
         return card
 
-    def render_attention(self, parent):
-        en = self.language == "en"
-        groups = attention_items(self.snapshot)
-        section = self.tk.Frame(parent, bg=self.panel, padx=15, pady=12)
-        section.pack(fill="x", pady=(0, 13))
-        self.label(section, "Needs your attention" if en else "需要你处理", 17, self.fg, True, raw=True).pack(anchor="w")
-        self.label(section, "Manually recorded · suggestions are not sent" if en else "人工登记 · 处理建议不会自动发送", 11, self.muted, raw=True).pack(anchor="w", pady=(3, 6))
-        if not groups["action_required"]:
-            self.label(section, "No recorded items need your attention" if en else "暂无已登记的待处理事项", 12, self.muted, raw=True).pack(anchor="w")
-        for item in groups["action_required"]:
-            task, run = item["task"], item["run"]
-            row = self.tk.Frame(section, bg=self.panel)
-            row.pack(fill="x", pady=(7, 4))
-            self.label(row, task["name"] + " · " + self.t(STATUS[run["status"]]), 14, self.fg, True, raw=True, wrap=800).pack(anchor="w")
-            for field, prefix in (("lifecycle_reason", "Why: " if en else "原因："), ("next_step", "Next: " if en else "建议下一步：")):
-                self.label(row, prefix + (run.get(field) or ("Not recorded" if en else "尚未记录")), 12, self.muted, raw=True, wrap=800).pack(anchor="w")
-            observation = ("Recorded: " if en else "记录时间：") + (self.stamp(run["updated"]) if run.get("updated") is not None else ("Unknown" if en else "未知"))
-            if run.get("stale"):
-                observation += " · Older record; check current status" if en else " · 记录较旧，请先核对当前状态"
-            self.label(row, observation, 11, self.muted, raw=True).pack(anchor="w", pady=(2, 4))
-            actions = self.tk.Frame(row, bg=self.panel)
-            actions.pack(anchor="w")
-            self.filter_chip(actions, "View suggested reply" if en else "查看处理建议", lambda key=task["id"]: self.open_task(key, advice=True)).pack(side="left", padx=(0, 6))
-            self.filter_chip(actions, "Activity details" if en else "活动详情", lambda key=task["id"]: self.open_task(key)).pack(side="left")
-        if groups["external"]:
-            self.label(section, "Waiting externally · informational" if en else "等待外部结果 · 仅供了解", 13, self.muted, True, raw=True).pack(anchor="w", pady=(12, 4))
-            for item in groups["external"]:
-                task, run = item["task"], item["run"]
-                self.label(section, task["name"] + " · " + (run.get("lifecycle_reason") or ("Not recorded" if en else "尚未记录")), 12, self.muted, raw=True, wrap=800).pack(anchor="w")
-                self.label(section, ("Next: " if en else "下一步：") + (run.get("next_step") or ("Not recorded" if en else "尚未记录")), 12, self.muted, raw=True, wrap=800).pack(anchor="w")
-                observed = self.stamp(run["updated"]) if run.get("updated") is not None else ("Unknown" if en else "未知")
-                self.label(section, ("Recorded: " if en else "记录时间：") + observed + ((" · Older record" if en else " · 记录较旧") if run.get("stale") else ""), 11, self.muted, raw=True).pack(anchor="w")
-                self.filter_chip(section, "Activity details" if en else "活动详情", lambda key=task["id"]: self.open_task(key)).pack(anchor="w", pady=(4, 5))
-
     def render_overview(self):
         self.workspace_toolbar()
         area = self.scroll_area()
-        self.render_attention(area)
         filtered = workspace_rows(self.rows, self.workspace_filter, self.search_query.get())
         grid = self.card_grid(area, minimum=370, maximum=2)
         for index, row in enumerate(filtered[:4]):
@@ -1810,17 +1776,19 @@ class Dashboard:
             parent.reflow_cards()
         else:
             surface.pack(fill="x", pady=(0, 8))
-        if status:
+        if status and not avatar:
             self.label(box, status, 14, self.accent, raw=True).pack(anchor="w", fill="x", pady=(0, 8))
         if avatar:
             header = self.tk.Frame(box, bg=self.panel)
             header.pack(fill="x")
-            tones = {"mint": "#dff1e5", "sky": "#dfedfa", "lavender": "#ece5f6", "peach": "#f8e7da"}
-            badge = self.tk.Canvas(header, width=36, height=36, bg=self.panel, highlightthickness=0)
-            badge.pack(side="left", padx=(0, 9))
-            badge.create_oval(0, 0, 35, 35, fill=tones.get(avatar, tones["mint"]), outline="")
-            badge.create_text(18, 18, text=title[:1], fill=self.accent, font=(self.font, -17, "bold"))
-            self.label(header, title, 20, self.fg, True, raw=True).pack(side="left", fill="x", expand=True)
+            badge = self.tk.Canvas(header, width=56, height=56, bg=self.panel, highlightthickness=0)
+            badge.pack(side="left", padx=(0, 12), anchor="n")
+            draw_portrait(badge, avatar if isinstance(avatar, dict) else {'avatar': avatar})
+            words = self.tk.Frame(header, bg=self.panel)
+            words.pack(side="left", fill="x", expand=True)
+            self.label(words, title, 20, self.fg, True, raw=True).pack(anchor="w", fill="x")
+            if status:
+                self.label(words, status, 12, self.accent, raw=True).pack(anchor="w", fill="x", pady=(4, 0))
         else:
             self.label(box, title, 20, self.fg, True, raw=True).pack(anchor="w", fill="x")
         self.label(box, summary, 15, self.muted, raw=True).pack(anchor="w", fill="x", pady=(9, 0))
@@ -1842,7 +1810,7 @@ class Dashboard:
             def walk(widget):
                 for child in widget.winfo_children():
                     if isinstance(child, self.tk.Label):
-                        child.configure(wraplength=max(40, width-45) if child.master is not box else width)
+                        child.configure(wraplength=max(40, width-68) if child.master is not box else width)
                     else:
                         walk(child)
             walk(box)
@@ -1886,14 +1854,22 @@ class Dashboard:
         area = self.scroll_area()
         en = self.language == "en"
         self.label(area, "Manually recorded executor observations; a profile is not a live session" if en else "人工记录的执行者观察；档案本身不代表正在运行的会话", 13, self.muted, raw=True, wrap=820).pack(anchor="w", pady=(0, 12))
-        agents = sorted(self.snapshot.get("agents", []), key=lambda a: (a.get("status") != "running", -(a.get("observed_at") or 0), a["id"]))
+        agents = sorted(self.snapshot.get("agents", []), key=lambda a: (not (a.get("status") == "running" and agent_observation(a, self.snapshot)["recent"]), -(a.get("observed_at") or 0), a["id"]))
         selected = next((item for item in agents if item["id"] == getattr(self, "selected_agent", None)), None)
         if selected:
             self.filter_chip(area, "← All agents" if en else "← 返回 Agent 列表", lambda: self.open_agent(None)).pack(anchor="w", pady=(0, 12))
-            state = agent_status_label(selected.get("status"), self.language)
-            observed = observation_label(selected.get("observed_at"), self.language, self.timezone)
-            self.compact_row(area, agent_text(selected, "name", self.language), agent_text(selected, "note", self.language)+"\n"+observed, state)
+            state = participant_observation(selected, self.snapshot, self.language, timezone=self.timezone)
+            identity = identity_label(selected, self.language)
+            details = identity+"\n"+("Panel ID · " if en else "面板标识 · ")+selected['id']+"\n"+source_label(selected, self.language)+(" · Identity checked at " if en else " · 身份核验时间 ")+timestamp_label(selected.get('identity_observed_at'), self.timezone)
+            if selected.get('identity_evidence'):
+                details += "\n"+selected['identity_evidence']
+            details += "\n"+agent_text(selected, "note", self.language)
+            for previous in selected.get('previous_names', []):
+                details += "\n"+("Previous label (history retained) · " if en else "旧显示名（保留历史） · ")+agent_text(previous, "name", self.language)
+            self.compact_row(area, agent_text(selected, "name", self.language), details, state, avatar=selected)
             grouped = agent_work(self.snapshot, selected)
+            if not agent_observation(selected, self.snapshot)['recent'] or selected.get('identity_verification') == 'historical':
+                grouped['current'] = []
             for key, zh, english in (("current", "当前已记录工作", "Current recorded work"), ("unfinished", "未完成的分配", "Unfinished assignments"), ("recent", "近期结束的活动", "Recent terminal activities")):
                 self.label(area, english if en else zh, 16, self.fg, True, raw=True).pack(anchor="w", pady=(14, 7))
                 for assignment in grouped[key]:
@@ -1908,10 +1884,13 @@ class Dashboard:
         for agent in agents:
             grouped = agent_work(self.snapshot, agent)
             counts = (f"{len(grouped['unfinished'])} unfinished · {len(grouped['recent'])} recent" if en else f"{len(grouped['unfinished'])} 项未完成 · {len(grouped['recent'])} 项近期结束")
-            current = grouped["current"]
+            observation = agent_observation(agent, self.snapshot)
+            current = grouped["current"] if observation["recent"] and agent.get("identity_verification") != "historical" else []
             work = (work_type_label(current[0].get("work_type"), self.language)+" · "+current[0]["task"]["name"]) if current else ("No current work recorded" if en else "暂无当前工作记录")
-            summary = work+"\n"+counts+"\n"+observation_label(agent.get("observed_at"), self.language, self.timezone)
-            self.compact_row(grid, agent_text(agent, "name", self.language), summary, agent_status_label(agent.get("status"), self.language), lambda key=agent["id"]: self.open_agent(key), avatar=agent.get("avatar") or "mint")
+            summary = identity_label(agent, self.language)+"\n"+("Current work · " if en else "当前职责 · ")+work+"\n"+counts+"\n"+source_label(agent,self.language)+(" · Identity checked at " if en else " · 身份核验时间 ")+timestamp_label(agent.get("identity_observed_at"), self.timezone)+"\n"+("Status observed at · " if en else "状态观察时间 · ")+timestamp_label(agent.get("observed_at"), self.timezone)
+            state = ("Last observed · " if en else "最近观察 · ") if observation['recent'] else ("Current unconfirmed · Last record · " if en else "当前待核实 · 上次记录 · ")
+            state += agent_status_label(observation['status'], self.language)
+            self.compact_row(grid, agent_text(agent, "name", self.language), summary, state, lambda key=agent["id"]: self.open_agent(key), avatar=agent)
         if not agents:
             self.label(area, "No agents registered" if en else "尚未登记 Agent", 16, self.muted, raw=True).pack(anchor="w", pady=20)
 

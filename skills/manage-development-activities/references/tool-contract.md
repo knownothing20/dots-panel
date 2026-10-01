@@ -104,11 +104,16 @@ Run doctor before proposing setup changes. It does not initialize missing DATA, 
 A native dispatch result proves only that supported worker identity/state at that observation. It is not a persisted cloud thread ID. Verify state through the current supported coordination interface; keep runtime identities out of panel text and shared source. Use panel-local friendly profile keys and manually observed timestamps.
 
 ```sh
-panel agent-register "$PANEL_AGENT_KEY" --name "$FRIENDLY_NAME"
+# Only a fixed nickname, never the task title. Omit --portrait to allocate an unused fixed style.
+panel agent-register "$PANEL_AGENT_KEY" --name "$FIXED_NICKNAME" --name-en "$FIXED_ENGLISH_NAME"
+# Only after matching this profile to the actual executor through supported tools:
+panel agent-identity "$PANEL_AGENT_KEY" --source manual --verification observed --observed-at "$OBSERVED_AT" --evidence "$SANITIZED_IDENTITY_MATCH_EVIDENCE"
 panel agent-observe "$PANEL_AGENT_KEY" --status running --observed-at "$OBSERVED_AT" --note "$SANITIZED_OBSERVATION"
 panel agent-run-assign "$RUN_ID" "$PANEL_AGENT_KEY" --work-type development
 panel status
 ```
+
+Keep panel-local keys unchanged and nicknames/portraits fixed. Never name a new profile after its task or role. For an authorized correction, use `agent-profile KEY --name FIXED_NICKNAME --name-en FIXED_ENGLISH_NAME --portrait CONFIRMED_UNUSED_STYLE`; previous display labels remain in history. `agent-identity` records a match observation, not a platform binding, live connection, permanent executor or future reuse guarantee. Use `--source historical --verification historical` for retained records that cannot currently be matched, with actual inspection time and evidence. The portrait catalog is original code/vector artwork; it provides no identity verification. Without --portrait, new registration allocates an unused style atomically while one is available. Explicit selections and an exhausted 48-style catalog can repeat styles; never merge identities based on matching portraits. Identity provenance uses identity_observed_at; executor state has its separate observed_at.
 
 Use an existing profile for the same verified executor. `agent-run-assign` is idempotent per run/profile and permits parallel participants without replacing the activity's primary owner. It does not start a worker. Record unknown for unconfirmed/pending initialization. A finished worker turn becomes idle only after observation; waiting or incomplete goal runs remain open. When the installed CLI lacks this operation, record the tracking gap and upgrade only with authorization; never silently overwrite another assignment.
 

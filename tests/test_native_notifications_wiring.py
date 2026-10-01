@@ -4,21 +4,15 @@ from dots_panel.notifications import PauseDeadline
 
 class NativeNotificationChecks(unittest.TestCase):
     def test_pause_budget_not_wall_time(self):
-        now=[0.0];d=PauseDeadline(lambda:now[0]);d.reset();now[0]=1.2;self.assertAlmostEqual(d.left(),3.8)
-        d.pause(True);now[0]=10;self.assertAlmostEqual(d.left(),3.8);d.pause(False);now[0]=12.8;self.assertAlmostEqual(d.left(),1)
-        d.pause(True);d.reset();now[0]=100;self.assertEqual(d.left(),5);d.pause(False);now[0]=105;self.assertEqual(d.left(),0)
-    def test_in_app_layer_and_bounded_jobs(self):
+        now=[0.0];d=PauseDeadline(lambda:now[0]);d.reset();now[0]=1.2;self.assertAlmostEqual(d.left(),3.8);d.pause(True);now[0]=10;self.assertAlmostEqual(d.left(),3.8);d.pause(False);now[0]=12.8;self.assertAlmostEqual(d.left(),1)
+    def test_in_app_layer_bounded_jobs_and_no_capsule(self):
         source=Path('src/dots_panel/native_notifications.py').read_text()
-        self.assertNotIn('Toplevel',source);self.assertNotIn('topmost',source);self.assertNotIn('grab_set',source);self.assertNotIn('focus_force',source)
-        self.assertIn("self.cancel(key)",source);self.assertIn("self.canvas.place(relx=1.0",source)
-        self.assertIn("self.root.unbind('<Configure>', self.configure_binding)",source)
-        self.assertIn('self.view.motion.reduced',source)
-    def test_refresh_and_navigation_hooks(self):
+        for forbidden in ['Toplevel','topmost','grab_set','focus_force',"controls['capsule']"]:self.assertNotIn(forbidden,source)
+        self.assertIn("self.cancel(key)",source);self.assertIn('self.canvas.place(relx=1.0',source);self.assertIn('self.root.unbind(sequence, binding)',source)
+        self.assertIn('self.view.motion.reduced',source);self.assertIn("draw_portrait(self.canvas,card.get('agent_record')",source)
+    def test_refresh_navigation_and_identity_glue(self):
         source=Path('src/dots_panel/desktop_view.py').read_text()
-        self.assertIn('self.notification_state.update(self.snapshot)',source)
-        self.assertIn('self.notifications.observe(notification_result)',source)
-        self.assertIn('self.notifications.mark_read(page)',source)
-        self.assertIn('self.notifications.close()',source)
+        for hook in ['self.notification_state.update(self.snapshot)','self.notifications.observe(notification_result)','self.notifications.mark_read(page)','self.notifications.close()']:self.assertIn(hook,source)
 
 class FakeRoot:
     def __init__(self):self.jobs={};self.serial=0;self.focus=None;self.pointer=(9999,9999);self.tk=self;self._w='root'
@@ -50,52 +44,8 @@ class FakeWidget:
     def create_oval(self,*args,**kwargs):pass
     def create_arc(self,*args,**kwargs):pass
     def create_text(self,*args,**kwargs):pass
-
-class NativeNotificationControllerTests(unittest.TestCase):
-    def make(self):
-        from types import SimpleNamespace
-        from dots_panel.notifications import NotificationState
-        from dots_panel.native_notifications import NativeNotifications
-        root=FakeRoot();tk=SimpleNamespace(Canvas=FakeWidget,Button=FakeWidget,TclError=RuntimeError)
-        view=SimpleNamespace(root=root,tk=tk,bg='#fff',fg='#244A42',accent='#258560',font='sans',language='en',motion=SimpleNamespace(reduced=True),nav_buttons={p:FakeWidget(root) for p in ['conversations','agents','schedules','about']},t=lambda x:x,round_shape=lambda *args:None,cut_text=lambda text,*args:text,render_page=lambda:None)
-        view.page_scroll=FakeWidget(root);view.page_scroll.place(width=700,height=500)
-        state=NotificationState();state.initialized=True;state.cards=[{'id':'r','task_id':'t','title':'Synthetic','agent':'Example','participants':1}];state.unread['conversations']['r']='t'
-        return NativeNotifications(view,state),root,view
-    def test_collapse_keeps_unread_and_reopen_does_not_duplicate(self):
-        ui,root,view=self.make();ui.expand();self.assertTrue(ui.expanded);self.assertIn('dwell',ui.jobs)
-        ui.collapse();self.assertFalse(ui.expanded);self.assertEqual(ui.state.counts()['conversations'],1);self.assertEqual(len(ui.state.cards),1)
-        ui.expand();self.assertEqual(len(ui.state.cards),1);ui.mark_read('conversations');self.assertFalse(ui.canvas.mapped);ui.close();self.assertFalse(root.jobs)
-    def test_hover_and_visible_focus_pause_and_resume(self):
-        ui,root,view=self.make();ui.expand();root.pointer=(30,30);ui.sync_pause();self.assertTrue(ui.deadline.paused);self.assertNotIn('dwell',ui.jobs)
-        root.pointer=(9999,9999);root.focus=ui.controls['progress'];ui.sync_pause();self.assertTrue(ui.deadline.paused)
-        root.focus=None;ui.sync_pause();self.assertFalse(ui.deadline.paused);self.assertIn('dwell',ui.jobs)
-        # An invisible capsule cannot keep the expanded card paused forever.
-        root.focus=ui.controls['capsule'];ui.sync_pause();self.assertFalse(ui.deadline.paused);ui.close()
-    def test_progress_opens_task_and_removes_only_matching_cards(self):
-        ui,root,view=self.make();ui.state.cards.append({'id':'r2','task_id':'other','title':'Other','agent':'Other','participants':1});ui.state.unread['conversations']['r2']='other';ui.expand();ui.open_task();self.assertEqual(view.selected_task,'t');self.assertEqual(len(ui.state.cards),1);self.assertEqual(ui.state.cards[0]['task_id'],'other');ui.close()
-    def test_duplicate_observe_does_not_reset_dwell(self):
-        ui,root,view=self.make();ui.expand();before=ui.deadline.started;ui.observe({'changed':set(),'cards':[]});self.assertEqual(ui.deadline.started,before);ui.close()
-
-    def test_keyboard_capsule_expansion_moves_focus_to_visible_action(self):
-        ui,root,view=self.make();ui.draw();ui.controls['capsule'].focus_set();self.assertIs(root.focus,ui.controls['capsule'])
-        ui.controls['capsule'].options['command']();job=ui.jobs['expand_focus'];_,fn=root.jobs.pop(job);fn();self.assertIs(root.focus,ui.controls['progress']);self.assertTrue(ui.controls['progress'].winfo_ismapped());self.assertTrue(ui.deadline.paused)
-        root.focus=view.page_scroll;ui.sync_pause();self.assertFalse(ui.deadline.paused);self.assertIn('dwell',ui.jobs);ui.close()
-    def test_last_progress_transfers_focus_to_detail(self):
-        ui,root,view=self.make();ui.expand(from_capsule=True);ui.open_task();job=ui.jobs['detail_focus'];_,fn=root.jobs.pop(job);fn();self.assertIs(root.focus,view.page_scroll);self.assertFalse(ui.canvas.mapped);ui.close()
-    def test_automatic_notification_never_takes_external_focus(self):
-        ui,root,view=self.make();root.focus=view.page_scroll;ui.observe({'changed':set(),'cards':[ui.state.cards[0]]});self.assertIs(root.focus,view.page_scroll);ui.close()
-
-    def test_repaint_does_not_unmap_visible_capsule_or_action(self):
-        ui,root,view=self.make();capsule=ui.controls['capsule'];action=ui.controls['progress'];counts={'capsule':0,'action':0}
-        cap_hide=capsule.place_forget;action_hide=action.place_forget
-        def hide_capsule():counts['capsule']+=1;cap_hide()
-        def hide_action():counts['action']+=1;action_hide()
-        capsule.place_forget=hide_capsule;action.place_forget=hide_action
-        for _ in range(10):ui.draw()
-        self.assertEqual(counts['capsule'],0)
-        ui.expand();self.assertEqual(counts['capsule'],1)
-        for _ in range(10):ui.draw()
-        self.assertEqual(counts['action'],0);ui.close()
+    def create_polygon(self,*args,**kwargs):pass
+    def create_line(self,*args,**kwargs):pass
 
 class EventRoot(FakeRoot):
     """Deterministic event loop with delayed geometry mapping and focus events."""
@@ -144,52 +94,91 @@ class EventWidget(FakeWidget):
             if self.pressed and self.mapped:self.pressed=False;self.options['command']()
         self.root.after(100,invoke)
 
-class NativeAsyncFocusTests(unittest.TestCase):
-    def make(self,root):
-        from types import SimpleNamespace
-        from dots_panel.notifications import NotificationState
-        from dots_panel.native_notifications import NativeNotifications
-        tk=SimpleNamespace(Canvas=EventWidget,Button=EventWidget,TclError=RuntimeError)
-        view=SimpleNamespace(root=root,tk=tk,bg='#fff',fg='#244A42',accent='#258560',font='sans',language='en',motion=SimpleNamespace(reduced=False),nav_buttons={p:EventWidget(root) for p in ['conversations','agents','schedules','about']},t=lambda x:x,round_shape=lambda *args:None,cut_text=lambda text,*args:text,render_page=lambda:None)
-        view.page_scroll=EventWidget(root);view.page_scroll.place(width=700,height=500)
-        state=NotificationState();state.initialized=True;state.cards=[{'id':'r','task_id':'t','title':'Synthetic','agent':'Example','participants':1}];state.unread['conversations']['r']='t'
-        return NativeNotifications(view,state),view
-    def test_space_reopen_survives_resize_map_focus_timing_and_dwell(self):
-        from unittest.mock import patch
-        from types import SimpleNamespace
-        root=EventRoot()
-        with patch('dots_panel.native_notifications.time.monotonic',side_effect=lambda:root.now/1000):
-            ui,view=self.make(root);root.advance(2);capsule=ui.controls['capsule'];capsule.focus_set();root.advance(1)
-            capsule.space_activate();root.after(20,lambda:ui.on_resize(SimpleNamespace(widget=root)))
-            root.advance(500)
-            self.assertTrue(ui.expanded);self.assertEqual(ui.progress,1);self.assertEqual(ui.canvas.winfo_width(),510)
-            self.assertIs(root.focus,ui.controls['progress']);self.assertTrue(ui.controls['progress'].mapped);self.assertTrue(ui.deadline.paused)
-            self.assertEqual(capsule.unmaps,1);self.assertEqual(ui.controls['progress'].unmaps,0);self.assertEqual(ui.controls['progress'].unmapped_focus_attempts,0)
-            root.advance(6000);self.assertTrue(ui.expanded)
-            view.page_scroll.focus_set();root.advance(5500);self.assertFalse(ui.expanded);self.assertEqual(ui.progress,0);self.assertEqual(ui.canvas.winfo_width(),232);self.assertEqual(ui.state.counts()['conversations'],1)
-            ui.close();root.advance(100);self.assertFalse(root.jobs)
-    def test_repeated_capsule_reopen_keeps_animation_callbacks_bounded(self):
-        from unittest.mock import patch
-        root=EventRoot()
-        with patch('dots_panel.native_notifications.time.monotonic',side_effect=lambda:root.now/1000):
-            ui,view=self.make(root);root.advance(2)
-            for _ in range(5):
-                ui.controls['capsule'].focus_set();ui.controls['capsule'].options['command']();root.advance(400)
-                self.assertTrue(ui.expanded);self.assertEqual(ui.progress,1);self.assertIs(root.focus,ui.controls['progress']);self.assertLessEqual(len(ui.jobs),2)
-                ui.collapse();root.advance(400);self.assertFalse(ui.expanded);self.assertEqual(ui.progress,0);self.assertIs(root.focus,ui.controls['capsule'])
-            ui.close();root.advance(100);self.assertFalse(root.jobs)
 
-    def test_reduced_motion_collapse_waits_for_capsule_mapping(self):
+
+def make_view(root, widget, reduced=True):
+    from types import SimpleNamespace
+    from dots_panel.notifications import NotificationState
+    from dots_panel.native_notifications import NativeNotifications
+    tk=SimpleNamespace(Canvas=widget,Button=widget,TclError=RuntimeError)
+    view=SimpleNamespace(root=root,tk=tk,bg='#fff',fg='#244A42',accent='#258560',font='sans',language='en',motion=SimpleNamespace(reduced=reduced),nav_buttons={p:widget(root) for p in ['conversations','agents','schedules','about']},t=lambda x:x,round_shape=lambda *args:None,cut_text=lambda text,*args:text,render_page=lambda:None)
+    view.page_scroll=widget(root);view.page_scroll.place(width=700,height=500)
+    state=NotificationState();state.initialized=True;state.cards=[{'id':'r','task_id':'t','title':'Synthetic','agent':'Example','participants':1,'agent_record':{'id':'a','name':'Example','portrait':'bloom-mint'}}];state.unread['conversations']['r']='t'
+    return NativeNotifications(view,state),view
+
+class NativeNotificationControllerTests(unittest.TestCase):
+    def make(self):
+        root=FakeRoot();ui,view=make_view(root,FakeWidget);return ui,root,view
+    def test_initial_queue_is_hidden_and_close_preserves_unread(self):
+        ui,root,view=self.make();self.assertFalse(ui.canvas.mapped);self.assertNotIn('capsule',ui.controls)
+        ui.expand();self.assertTrue(ui.expanded);ui.collapse();self.assertFalse(ui.canvas.mapped);self.assertEqual(ui.state.counts()['conversations'],1)
+        ui.observe({'changed':set(),'cards':[],'content_changed':True});self.assertFalse(ui.canvas.mapped);ui.close();self.assertFalse(root.jobs)
+    def test_mouse_focus_is_not_keyboard_pause_or_outline(self):
+        ui,root,view=self.make();ui.expand();root.focus=ui.controls['more'];ui.pointer_input();ui.sync_pause();self.assertFalse(ui.deadline.paused)
+        self.assertTrue(all(w.options['highlightthickness']==0 for w in ui.controls.values()))
+        root.focus=ui.controls['progress'];ui.keyboard_input();ui.sync_pause();self.assertTrue(ui.deadline.paused)
+        self.assertTrue(all(w.options['highlightthickness']==1 for w in ui.controls.values()))
+        ui.pointer_input();ui.sync_pause();self.assertFalse(ui.deadline.paused);ui.close()
+    def test_hover_pause_and_leave_resume(self):
+        ui,root,view=self.make();ui.expand();root.pointer=(30,30);ui.sync_pause();self.assertTrue(ui.deadline.paused)
+        root.pointer=(9999,9999);ui.sync_pause();self.assertFalse(ui.deadline.paused);ui.close()
+    def test_keyboard_progress_focuses_detail_mouse_progress_does_not(self):
+        for keyboard in (False,True):
+            ui,root,view=self.make();ui.expand();root.focus=ui.controls['progress'];ui.input_mode='keyboard' if keyboard else 'pointer';ui.open_task();_,fn=root.jobs.pop(ui.jobs['detail_focus']);fn()
+            self.assertEqual(view.selected_task,'t');self.assertFalse(ui.canvas.mapped)
+            self.assertEqual(root.focus is view.page_scroll,keyboard);ui.close()
+    def test_auto_notification_never_takes_focus_and_poll_does_not_reset(self):
+        ui,root,view=self.make();root.focus=view.page_scroll;ui.observe({'changed':set(),'cards':[ui.state.cards[0]]});self.assertIs(root.focus,view.page_scroll);started=ui.deadline.started
+        ui.observe({'changed':set(),'cards':[]});self.assertEqual(ui.deadline.started,started);ui.close()
+    def test_three_unread_categories_use_identical_dots(self):
+        ui,root,view=self.make()
+        for p in ('conversations','agents','schedules'):ui.state.unread[p]['x']=True
+        ui.badges()
+        for p in ('conversations','agents','schedules'):
+            label=view.nav_buttons[p].options['text'];self.assertTrue(label.endswith('  ●'));self.assertFalse(any(c.isdigit() for c in label));self.assertNotIn('◷',label)
+        ui.mark_read('agents');self.assertFalse(view.nav_buttons['agents'].options['text'].endswith('●'));self.assertEqual(ui.state.counts()['conversations'],2);ui.close()
+    def test_notification_uses_shared_portrait_and_keeps_widgets_mapped(self):
+        from unittest.mock import patch
+        ui,root,view=self.make()
+        with patch('dots_panel.native_notifications.draw_portrait') as draw:
+            ui.expand();self.assertEqual(draw.call_args.args[1],ui.state.cards[0]['agent_record'])
+        action=ui.controls['progress'];count=[0];original=action.place_forget
+        def hide():count[0]+=1;original()
+        action.place_forget=hide
+        for _ in range(10):ui.draw()
+        self.assertEqual(count[0],0);ui.close()
+
+class NativeAsyncInputTests(unittest.TestCase):
+    def test_mouse_focus_does_not_pin_after_leave_and_full_hide_reappears_for_new_event(self):
         from unittest.mock import patch
         root=EventRoot()
         with patch('dots_panel.native_notifications.time.monotonic',side_effect=lambda:root.now/1000):
-            ui,view=self.make(root);view.motion.reduced=True;root.advance(2)
-            ui.controls['capsule'].focus_set();ui.expand(from_capsule=True);root.advance(40)
-            self.assertIs(root.focus,ui.controls['progress']);self.assertTrue(ui.deadline.paused)
-            ui.collapse();root.advance(40)
-            self.assertFalse(ui.expanded);self.assertEqual(ui.progress,0);self.assertTrue(ui.controls['capsule'].mapped)
-            self.assertIs(root.focus,ui.controls['capsule']);self.assertEqual(ui.controls['capsule'].unmapped_focus_attempts,0)
-            # A rapid reopen cancels the pending collapsed-focus handoff.
-            ui.expand(from_capsule=True);root.advance(40);ui.collapse();ui.expand(from_capsule=True);root.advance(60)
-            self.assertTrue(ui.expanded);self.assertIs(root.focus,ui.controls['progress']);self.assertNotIn('focus_capsule',ui.jobs)
-            ui.close();root.advance(100);self.assertFalse(root.jobs)
+            ui,view=make_view(root,EventWidget,False);root.advance(2);view.page_scroll.focus_set();ui.expand();root.advance(400)
+            self.assertIs(root.focus,view.page_scroll);ui.pointer_input();ui.controls['progress'].focus_set();root.advance(6000)
+            self.assertFalse(ui.expanded);self.assertEqual(ui.progress,0);self.assertFalse(ui.canvas.mapped);self.assertEqual(ui.state.counts()['conversations'],1)
+            ui.observe({'changed':set(),'cards':[],'content_changed':True});root.advance(100);self.assertFalse(ui.canvas.mapped)
+            ui.state.cards.insert(0,{'id':'new','task_id':'new','title':'New','agent':'Example','participants':1});ui.observe({'changed':{'conversations'},'cards':[ui.state.cards[0]]});root.advance(400)
+            self.assertTrue(ui.expanded);self.assertTrue(ui.canvas.mapped);ui.close();root.advance(100);self.assertFalse(root.jobs)
+    def test_keyboard_focus_pauses_and_blur_resumes_without_unmap_churn(self):
+        from unittest.mock import patch
+        from types import SimpleNamespace
+        root=EventRoot()
+        with patch('dots_panel.native_notifications.time.monotonic',side_effect=lambda:root.now/1000):
+            ui,view=make_view(root,EventWidget,False);root.advance(2);ui.expand();root.advance(400);ui.keyboard_input();ui.controls['progress'].focus_set();root.advance(40)
+            self.assertTrue(ui.deadline.paused);root.after(20,lambda:ui.on_resize(SimpleNamespace(widget=root)));root.advance(6000)
+            self.assertTrue(ui.expanded);self.assertEqual(ui.controls['progress'].unmaps,0)
+            view.page_scroll.focus_set();root.advance(5500);self.assertFalse(ui.canvas.mapped);self.assertFalse(ui.expanded);ui.close();root.advance(100);self.assertFalse(root.jobs)
+    def test_keyboard_escape_restores_external_focus_for_both_motion_modes(self):
+        from unittest.mock import patch
+        for reduced in (False,True):
+            root=EventRoot()
+            with patch('dots_panel.native_notifications.time.monotonic',side_effect=lambda:root.now/1000):
+                ui,view=make_view(root,EventWidget,reduced);root.advance(2);view.page_scroll.focus_set();ui.expand();root.advance(400);ui.keyboard_input();ui.controls['close'].focus_set();root.advance(40);ui.escape();root.advance(400)
+                self.assertIs(root.focus,view.page_scroll);self.assertFalse(ui.canvas.mapped);self.assertEqual(ui.state.counts()['conversations'],1);ui.close();root.advance(100);self.assertFalse(root.jobs)
+    def test_space_progress_after_configure_and_keyboard_focus(self):
+        from unittest.mock import patch
+        from types import SimpleNamespace
+        root=EventRoot()
+        with patch('dots_panel.native_notifications.time.monotonic',side_effect=lambda:root.now/1000):
+            ui,view=make_view(root,EventWidget,False);root.advance(2);ui.expand();root.advance(400);ui.keyboard_input();ui.controls['progress'].focus_set();ui.controls['progress'].space_activate();root.after(20,lambda:ui.on_resize(SimpleNamespace(widget=root)));root.advance(300)
+            self.assertEqual(view.selected_task,'t');self.assertIs(root.focus,view.page_scroll);self.assertFalse(ui.canvas.mapped);ui.close();root.advance(100);self.assertFalse(root.jobs)

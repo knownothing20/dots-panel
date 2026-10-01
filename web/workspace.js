@@ -100,7 +100,7 @@ globalThis.PanelAgents = {
   observation(agent,state={},now=Date.now()/1000) {
     const observed=Number(agent?.observed_at),age=now-observed;
     const known=typeof agent?.observed_at==='number'&&Number.isFinite(observed);
-    return {known,recent:known&&age>=0&&age<=Number(state.stale_after_seconds??120),status:known?agent.status:'unknown'};
+    return {known,recent:known&&agent?.identity_verification!=='historical'&&age>=0&&age<=Number(state.stale_after_seconds??120),status:known?agent.status:'unknown'};
   },
   observedRuns(state,now=Date.now()/1000) {
     const runs=new Map(['runs','latest_runs','current_runs','open_runs'].flatMap(key=>state[key]||[]).map(run=>[run.id,run])),active=new Set();

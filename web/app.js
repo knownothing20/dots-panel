@@ -58,7 +58,7 @@ let renderedTaskId=null;
 const expandedSchedules=new Set(), expandedSoftware=new Set(), expandedSkills=new Set();
 let workspaceQuery = '';
 let lastState = null;
-const panelNotifications=typeof PanelNotifications!=='undefined'?new PanelNotifications.Controller({document,language:()=>language,openTask:id=>{const task=lastState?.tasks?.find(item=>item.id===id);if(task){selectTask(task);$('detail-scroll').focus({preventScroll:true});}}}):null;
+const panelNotifications=typeof PanelNotifications!=='undefined'?new PanelNotifications.Controller({document,language:()=>language,avatar:agentAvatar,openTask:(id,{keyboard=false}={})=>{const task=lastState?.tasks?.find(item=>item.id===id);if(task){selectTask(task);if(keyboard)$('detail-scroll').focus({preventScroll:true});}}}):null;
 function element(tag, text, className) { const node = document.createElement(tag); node.textContent = text; if (className) node.className = className; return node; }
 // Preserve open evidence, focused disclosure and the visible timeline item during polling.
 function disclosure(node,store,key) {
@@ -347,11 +347,31 @@ function renderAbout(about={}){
   $('about-notes').replaceChildren();for(const item of about.install_notes||[])$('about-notes').append(element('p','• '+(item[language]||'')));
 }
 function agentAvatar(agent) {
-  const colors=['mint','sky','lavender','peach'];
-  const avatar=element('span','',`agent-avatar ${colors.includes(agent.avatar)?agent.avatar:'mint'}`);
+  const avatar=element('span','','agent-avatar fixed-portrait');
   avatar.setAttribute('aria-hidden','true');
-  avatar.append(element('span','••','agent-eyes'),element('span','⌣','agent-mouth'));
+  const spec=agent.portrait_spec;
+  if(spec?.shapes?.length){
+    const create=tag=>document.createElementNS?document.createElementNS('http://www.w3.org/2000/svg',tag):document.createElement(tag);
+    const svg=create('svg');svg.setAttribute('viewBox','0 0 64 64');svg.setAttribute('focusable','false');
+    const allowed=new Set(['x','y','width','height','rx','ry','cx','cy','fill','stroke','stroke-width','stroke-linecap','stroke-linejoin','points']);
+    for(const shape of spec.shapes.slice(0,32)){
+      if(!['rect','ellipse','polyline','polygon'].includes(shape.tag))continue;
+      const node=create(shape.tag);
+      for(const [key,value] of Object.entries(shape.attrs||{}))if(allowed.has(key))node.setAttribute(key,String(value));
+      svg.append(node);
+    }
+    avatar.append(svg);
+  }else{
+    // Read-only compatibility view for an older server; no initials tied to a task title.
+    avatar.append(element('span','••','agent-eyes'),element('span','⌣','agent-mouth'));
+  }
   return avatar;
+}
+function identityLabel(agent) {
+  return ({observed:["人工核验对应关系 · 非永久会话","Manually matched · not a permanent session"],historical:["历史档案 · 当前执行者未核验","Historical profile · current executor unverified"],unknown:["面板档案 · 执行者对应未核验","Panel profile · executor match unverified"]}[agent.identity_verification]||["面板档案 · 执行者对应未核验","Panel profile · executor match unverified"])[language==='en'?1:0];
+}
+function identitySource(agent) {
+  return ({manual:['人工核验','Manual verification'],historical:['历史留存','Historical records'],unknown:['来源未核验','Source unverified']}[agent.identity_source]||['来源未核验','Source unverified'])[language==='en'?1:0];
 }
 function taskOwner(taskId,state) { return PanelAgents.taskLead(state,taskId).agent; }
 function ownerBadge(taskId,state) {
@@ -371,18 +391,20 @@ function ownerBadge(taskId,state) {
 }
 function renderAgents(state) {
   $('agent-cards').replaceChildren();
-  const agents=[...(state.agents||[])].sort((a,b)=>Number(b.status==='running')-Number(a.status==='running')||(b.observed_at||0)-(a.observed_at||0)||a.id.localeCompare(b.id));
+  const agents=[...(state.agents||[])].sort((a,b)=>Number(b.status==='running'&&PanelAgents.observation(b,state).recent)-Number(a.status==='running'&&PanelAgents.observation(a,state).recent)||(b.observed_at||0)-(a.observed_at||0)||a.id.localeCompare(b.id));
   const labels={running:'工作中',idle:'空闲',blocked:'受阻',unavailable:'不可用',unknown:'未知'};
   if(!agents.length)$('agent-cards').append(registryCard(t('还没有登记的 Agent'),t('通过本地 CLI 登记负责人，不会扫描或创建执行者。'),'☺'));
   for(const agent of agents){
     const card=element('article','','agent-row');
     const observation=PanelAgents.observation(agent,state);
-    const header=element('div','','agent-heading');header.append(agentAvatar(agent),element('h2',PanelAgents.text(agent,'name',language)),element('span',phrase('最近观察：','Last observed: ')+t(labels[observation.status]||'未知'),'agent-state'));
+    const header=element('div','','agent-heading');header.append(agentAvatar(agent),element('h2',PanelAgents.text(agent,'name',language)),element('span',(observation.recent?phrase('最近观察：','Last observed: '):phrase('当前待核实 · 上次记录：','Current unconfirmed · Last record: '))+t(labels[observation.status]||'未知'),'agent-state'));
     if(observation.status==='running'&&observation.recent)card.classList.add('observed-running');
     const work=PanelAgents.work(state,agent);
-    const current=observation.recent&&work.current.length?work.current.map(row=>`${PanelAgents.type(row.work_type,language)} / ${row.task.name}`).join(' · '):t(agent.status==='idle'?'无当前任务':'当前任务未确认');
-    const currentLabel=element('span',current,'agent-current');currentLabel.title=current;header.append(currentLabel);card.append(header);
-    card.append(element('small',`${phrase('人工观察','Manual observation')} · ${stamp(agent.observed_at)}${observation.known&&!observation.recent?phrase(' · 较早，当前待确认',' · Older; current state unconfirmed'):''}`,'agent-observed'));
+    const current=observation.recent&&agent.identity_verification!=='historical'&&work.current.length?work.current.map(row=>`${PanelAgents.type(row.work_type,language)} / ${row.task.name}`).join(' · '):t(agent.status==='idle'?'无当前任务':'当前任务未确认');
+    card.append(header,element('small',identityLabel(agent),'agent-identity'));
+    const currentLabel=element('span',phrase('当前职责 · ','Current work · ')+current,'agent-current');currentLabel.title=current;card.append(currentLabel);
+    card.append(element('small',`${identitySource(agent)} · ${phrase('身份核验时间','Identity checked at')} ${stamp(agent.identity_observed_at)}`,'agent-identity-time'));
+    card.append(element('small',`${phrase('状态观察时间','Status observed at')} · ${stamp(agent.observed_at)}${observation.known&&!observation.recent?phrase(' · 较早，当前待确认',' · Older; current state unconfirmed'):''}`,'agent-observed'));
     const links=element('div','','agent-task-links');
     for(const [group,title] of [['unfinished','未完'],['recent','最近']]){
       for(const row of work[group].slice(0,1)){const task=row.task;const button=element('button',`${PanelAgents.lifecycle(row.status,language)} · ${task.name} ›`,'agent-task-link');button.type='button';button.title=task.name;button.addEventListener('click',()=>selectTask(task));links.append(button);}
@@ -393,7 +415,10 @@ function renderAgents(state) {
     const details=element('details','','agent-details');details.dataset.disclosureKey='agent:'+agent.id;details.open=expandedAgents.has(agent.id);
     const summary=element('summary',t('详情'));details.append(summary);
     details.addEventListener('toggle',()=>{if(details.open)expandedAgents.add(agent.id);else expandedAgents.delete(agent.id);});
-    details.append(element('p',PanelAgents.text(agent,'name',language)),element('p',`${t('面板标识')} · ${agent.id}`),element('p',`${t('最后确认时间')} · ${agent.observed_at==null?t('尚未确认'):stamp(agent.observed_at)}`),element('p',current));
+    details.append(element('p',PanelAgents.text(agent,'name',language)),element('p',`${t('面板标识')} · ${agent.id}`),element('p',`${phrase('状态观察时间','Status observed at')} · ${agent.observed_at==null?t('尚未确认'):stamp(agent.observed_at)}`),element('p',current));
+    details.append(element('p',identityLabel(agent)),element('p',`${identitySource(agent)} · ${phrase('身份核验时间','Identity checked at')} ${stamp(agent.identity_observed_at)}`));
+    if(agent.identity_evidence)details.append(element('p',agent.identity_evidence));
+    for(const previous of agent.previous_names||[])details.append(element('p',phrase('旧显示名（保留历史） · ','Previous label (history retained) · ')+PanelAgents.text(previous,'name',language)));
     const note=PanelAgents.text(agent,'note',language);if(note)details.append(element('p',`${t('观察说明')} · ${note}`,'agent-note'));
     for(const [group,title] of [['unfinished','负责的未完活动'],['recent','最近关联活动']]){
       for(const row of work[group]){const task=row.task;const button=element('button',`${PanelAgents.lifecycle(row.status,language)} · ${task.name} ›`,'agent-task-link');button.type='button';button.addEventListener('click',()=>selectTask(task));details.append(button);}
@@ -413,25 +438,6 @@ function renderCloseout(run,state) {
   const files=element('button',phrase('查看文件','View files'),'filter-chip');files.type='button';files.addEventListener('click',()=>setDetailTab('files'));body.append(files);
 }
 
-function renderAttention(state) {
-  const container=$('needs-attention'),groups=PanelWorkspace.attention(state);
-  container.replaceChildren(element('h2',phrase('需要你处理','Needs your attention')),element('small',phrase('人工登记 · 处理建议不会自动发送','Manually recorded · suggestions are not sent')));
-  if(!groups.action_required.length)container.append(element('p',phrase('暂无已登记的待处理事项','No recorded items need your attention'),'empty-caption'));
-  for(const {task,run} of groups.action_required){
-    const row=element('article','','attention-row');
-    row.append(element('h3',`${task.name} · ${t(statuses[run.status])}`),element('p',`${phrase('原因','Why')}: ${run.lifecycle_reason||phrase('尚未记录','Not recorded')}`),element('p',`${phrase('建议下一步','Next')}: ${run.next_step||phrase('尚未记录','Not recorded')}`));
-    row.append(element('small',`${phrase('记录时间','Recorded')}: ${stamp(run.updated)}${run.stale?phrase(' · 记录较旧，请先核对当前状态',' · Older record; check current status'):''}`));
-    const actions=element('div','','attention-actions');
-    const advice=element('button',phrase('查看处理建议','View suggested reply'),'filter-chip');advice.type='button';advice.id='attention-advice-'+task.id;advice.addEventListener('click',()=>selectTask(task,true));
-    const details=element('button',phrase('活动详情','Activity details'),'filter-chip');details.type='button';details.id='attention-details-'+task.id;details.addEventListener('click',()=>selectTask(task));
-    actions.append(advice,details);row.append(actions);container.append(row);
-  }
-  if(groups.external.length){
-    const group=element('details','','attention-external');group.append(element('summary',phrase(`等待外部结果 · ${groups.external.length} 项 · 仅供了解`,`Waiting externally · ${groups.external.length} · informational`)));
-    for(const {task,run} of groups.external){const row=element('div','','attention-row');row.append(element('p',`${task.name} · ${run.lifecycle_reason||phrase('尚未记录','Not recorded')}`),element('p',`${phrase('下一步','Next')}: ${run.next_step||phrase('尚未记录','Not recorded')}`),element('small',`${phrase('记录时间','Recorded')}: ${stamp(run.updated)}${run.stale?phrase(' · 记录较旧',' · Older record'):''}`));const details=element('button',phrase('活动详情','Activity details'),'filter-chip');details.type='button';details.addEventListener('click',()=>selectTask(task));row.append(details);group.append(row);}
-    container.append(group);
-  }
-}
 function renderAdvice(task,run) {
   const visible=task&&task.id===adviceTaskId&&['waiting_user','awaiting_review','paused'].includes(run?.status);
   $('attention-advice').hidden=!visible;
@@ -500,7 +506,6 @@ function render(state) {
   const chosenRun=chosen?PanelWorkspace.rows([chosen],state.current_runs||state.latest_runs||state.runs)[0].run:null;
   renderAdvice(chosen,chosenRun);
   renderCloseout(chosenRun,state);
-  renderAttention(state);
   renderFiles(state,selected);
   renderOutputBar(state,selected);
   $('detail-status').textContent=chosen?t(statuses[chosenRun?.status||chosen.latest_status||'pending']):'';

@@ -17,18 +17,19 @@ class NativeIntegrationWiringTests(TestCase):
         view=self.viewer();view.refresh=Mock();view.build_shell()
         self.assertTrue(any(call.args[1]=='↻ 刷新' and call.args[2] is view.refresh for call in view.filter_chip.call_args_list))
         self.assertEqual(PAGE_NAMES['about'],'关于与版本')
-    def test_overview_invokes_attention_renderer(self):
+    def test_overview_omits_attention_renderer(self):
         view=self.viewer();view.workspace_toolbar=Mock();area=Mock();view.scroll_area=Mock(return_value=area)
         view.render_attention=Mock();view.rows=[];view.workspace_filter='all';view.search_query=Mock();view.search_query.get.return_value=''
         view.card=Mock(return_value=(Mock(),Mock()));view.resource_card=Mock(return_value=Mock());view.schedules_summary_card=Mock(return_value=Mock())
-        view.render_overview();view.render_attention.assert_called_once_with(area)
-    def test_attention_falls_back_when_reason_missing(self):
-        view=self.viewer();view.snapshot={'tasks':[{'id':'task','name':'Synthetic'}],'runs':[{'id':'run','task_id':'task','status':'waiting_user','started':1,'updated':1}]}
-        view.render_attention(Mock());labels=[str(call.args[1]) for call in view.label.call_args_list]
-        self.assertTrue(any('原因：尚未记录' in label for label in labels))
-        self.assertTrue(any('建议下一步：尚未记录' in label for label in labels))
-        buttons=[call.args[1] for call in view.filter_chip.call_args_list]
-        self.assertIn('查看处理建议',buttons);self.assertIn('活动详情',buttons)
+        view.render_overview();view.render_attention.assert_not_called()
+    def test_home_removal_preserves_waiting_lifecycle(self):
+        from dots_panel.desktop_view import task_rows
+        snapshot={'tasks':[{'id':'task','name':'Synthetic','project':'Test','latest_status':'waiting_user'}],'runs':[{'id':'run','task_id':'task','status':'waiting_user','started':1,'updated':1,'lifecycle_reason':'Review scope','next_step':'Decide'}]}
+        row=task_rows(snapshot, now=2)[0]
+        self.assertEqual(row['status'],'waiting_user')
+        self.assertEqual(row['run']['lifecycle_reason'],'Review scope')
+        self.assertEqual(row['run']['next_step'],'Decide')
+        self.assertFalse(hasattr(Dashboard,'render_attention'))
     def test_health_shows_actual_last_successful_sample(self):
         view=self.viewer();view.health=Mock();view.read_error=False;view.preference_error=False;view.last_successful_refresh=1
         view.update_health();label=view.health.configure.call_args.kwargs['text'];self.assertIn('每 5 秒 · 最近刷新',label)

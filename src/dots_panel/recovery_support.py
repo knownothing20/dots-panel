@@ -16,7 +16,14 @@ class RecoveryStoreMixin:
         now = time.time()
         values = (key,text(name,120),avatar,now,now,text(name_en,120) if name_en else '',text(note,500) if note else '',text(note_en,500) if note_en else '')
         with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            old=db.execute('SELECT name,name_en,avatar,portrait FROM agents WHERE id=?',(key,)).fetchone()
+            from .agent_identity import default_portrait, available_portrait
+            fixed_portrait = (old['portrait'] or default_portrait(key,old['avatar'])) if old else available_portrait(db,key,avatar)
+            if old and (old['name'],old['name_en']) != (values[1],values[5]):
+                db.execute('INSERT INTO agent_profile_history(agent_id,name,name_en,changed_at) VALUES(?,?,?,?)',(key,old['name'],old['name_en'],now))
             db.execute("INSERT INTO agents(id,name,avatar,created,updated,name_en,note,note_en) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,avatar=excluded.avatar,updated=excluded.updated,name_en=excluded.name_en,note=excluded.note,note_en=excluded.note_en",values)
+            db.execute('UPDATE agents SET portrait=? WHERE id=?',(fixed_portrait,key))
         return key
 
     def agent_observe(self, key, status, observed_at, note='', note_en=''):
@@ -71,18 +78,66 @@ class RecoveryStoreMixin:
                        (run_id,agent_id,work_type,time.time()))
         return {'run_id':run_id,'agent_id':agent_id,'record_only':True}
 
-    def agent_register(self, key, name, avatar='mint', name_en=''):
+    def agent_register(self, key, name, avatar='mint', name_en='', portrait=None):
+        import sqlite3
+        from .app import text, AGENT_AVATARS
+        from .agent_identity import PORTRAITS, available_portrait
+        if not isinstance(key,str) or not re.fullmatch(r'[a-z0-9][a-z0-9_-]{0,63}',key):
+            raise ValueError('Invalid stable agent key')
+        if avatar not in AGENT_AVATARS:
+            raise ValueError('Invalid agent avatar')
+        if portrait is not None and portrait not in PORTRAITS:
+            raise ValueError('Invalid fixed portrait')
+        now=time.time()
+        values=(key,text(name,120),avatar,now,now,text(name_en,120) if name_en else '')
         with self.connect() as db:
-            if db.execute('SELECT 1 FROM agents WHERE id=?',(key,)).fetchone():
-                raise ValueError('Agent already registered')
-        return self.agent_upsert(key,name,avatar,name_en)
+            db.execute('BEGIN IMMEDIATE')
+            fixed_portrait = portrait or available_portrait(db,key,avatar)
+            try:
+                db.execute('INSERT INTO agents(id,name,avatar,created,updated,name_en,portrait) VALUES(?,?,?,?,?,?,?)',(*values,fixed_portrait))
+            except sqlite3.IntegrityError as error:
+                raise ValueError('Agent already registered') from error
+        return key
 
-    def agent_profile(self, key, name=None, avatar=None, name_en=None):
+    def agent_profile(self, key, name=None, avatar=None, name_en=None, portrait=None):
+        from .app import text, AGENT_AVATARS
+        from .agent_identity import PORTRAITS, default_portrait
+        if avatar is not None and avatar not in AGENT_AVATARS:
+            raise ValueError('Invalid agent avatar')
+        if portrait is not None and portrait not in PORTRAITS:
+            raise ValueError('Invalid fixed portrait')
         with self.connect() as db:
-            row=db.execute('SELECT * FROM agents WHERE id=?',(key,)).fetchone()
-            if not row: raise ValueError('Unknown agent ID')
-            old=dict(row)
-        return self.agent_upsert(key,name if name is not None else old['name'],avatar if avatar is not None else old['avatar'],name_en if name_en is not None else old['name_en'],old['note'],old['note_en'])
+            db.execute('BEGIN IMMEDIATE')
+            old=db.execute('SELECT * FROM agents WHERE id=?',(key,)).fetchone()
+            if not old: raise ValueError('Unknown agent ID')
+            new_name = text(name,120) if name is not None else old['name']
+            new_en = text(name_en,120) if name_en else '' if name_en is not None else old['name_en']
+            if (new_name,new_en) != (old['name'],old['name_en']):
+                db.execute('INSERT INTO agent_profile_history(agent_id,name,name_en,changed_at) VALUES(?,?,?,?)', (key,old['name'],old['name_en'],time.time()))
+            db.execute('UPDATE agents SET name=?,name_en=?,avatar=?,portrait=?,updated=? WHERE id=?',
+                       (new_name,new_en,avatar if avatar is not None else old['avatar'],portrait or old['portrait'] or default_portrait(key,old['avatar']),time.time(),key))
+        return key
+
+    def agent_identity(self, key, source, verification, evidence, observed_at):
+        from .app import text, timestamp
+        from .agent_identity import IDENTITY_SOURCES, IDENTITY_VERIFICATIONS
+        if source not in IDENTITY_SOURCES or verification not in IDENTITY_VERIFICATIONS:
+            raise ValueError('Invalid identity provenance')
+        if (verification == 'observed' and source != 'manual') or (verification == 'historical' and source != 'historical'):
+            raise ValueError('Verification must match its actual source')
+        observed_at = timestamp(observed_at)
+        evidence = text(evidence,1000)
+        if observed_at > time.time()+300:
+            raise ValueError('Identity observation cannot be in the future')
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            old=db.execute('SELECT * FROM agents WHERE id=?',(key,)).fetchone()
+            if not old: raise ValueError('Unknown agent ID')
+            if old['identity_observed_at'] is not None and observed_at < old['identity_observed_at']:
+                raise ValueError('Identity observation is older than the existing evidence')
+            db.execute('UPDATE agents SET identity_source=?,identity_verification=?,identity_evidence=?,identity_observed_at=?,updated=? WHERE id=?',
+                       (source,verification,evidence,observed_at,time.time(),key))
+        return {'agent_id':key,'record_only':True,'platform_binding_created':False}
 
     def release_observe(self, repo_url, release_status, sync_status, checked_at, release_tag=None, remote_commit=None):
         """Record a manual release observation; never contacts or publishes to GitHub."""

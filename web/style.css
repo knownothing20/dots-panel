@@ -133,3 +133,14 @@ button,select{min-height:40px}.nav{color:#596d60;font-size:15px}.nav-label,.eyeb
 @media(max-width:720px){.activity-toolbar{grid-template-columns:minmax(0,1fr) minmax(112px,32%);gap:8px}.activity-toolbar .activity-search{width:auto}#activity-tabs .filter-chip{padding:7px 9px}.activity-toolbar .more-status-filter{max-width:155px}.detail-fixed .detail-heading{flex-direction:row;flex-wrap:wrap;align-items:center}.detail-fixed .detail-heading h2{font-size:21px;flex-basis:calc(100% - 64px)}.detail-fixed .detail-meta-line{flex-direction:column;align-items:flex-start}.detail-fixed .detail-heading>.status{margin-left:48px}.about-row>strong{text-align:left;max-width:100%}.settings-card{padding:20px}.events{padding:3px 16px}}
 .task-next{font-size:13px;line-height:1.6;color:#57745b;margin:8px 0 0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .task-progress progress{display:block;appearance:none;width:100%;height:5px;border:0;border-radius:6px;overflow:hidden;background:#e4edde;accent-color:#31966c}.task-progress progress::-webkit-progress-bar{background:#e4edde}.task-progress progress::-webkit-progress-value{background:#31966c;border-radius:6px}.task-progress progress::-moz-progress-bar{background:#31966c;border-radius:6px}
+
+/* Fixed original portraits are independent of names, tasks and identity evidence. */
+.agent-heading{grid-template-columns:56px minmax(0,1fr);gap:4px 12px;align-items:start}
+.agent-heading>.agent-avatar.fixed-portrait{grid-row:1/3;width:56px;height:56px;padding:0;background:transparent;border-radius:17px;overflow:hidden}
+.agent-heading h2{grid-column:2;align-self:end;margin:0;font-size:20px;overflow-wrap:anywhere}
+.agent-heading .agent-state{grid-column:2;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.agent-avatar.fixed-portrait svg{display:block;width:100%;height:100%}
+.agent-identity{display:block;font-size:12px;color:#657567;line-height:1.6;margin:12px 0 8px}
+.agent-current{display:block;grid-column:auto;font-size:14px;color:#405c49;line-height:1.6;overflow-wrap:anywhere}
+.owner-badge>.agent-avatar.fixed-portrait{padding:0;background:transparent;border-radius:9px}
+.agent-details p{overflow-wrap:anywhere;white-space:pre-wrap}

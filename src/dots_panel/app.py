@@ -78,6 +78,7 @@ MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
 LIBRARY_XATTRS = ("user.library-file-id", "user.library-file-version")
 
 from .outputs import output_summaries, validate_mp4_header
+from .agent_identity import PORTRAITS, IDENTITY_SOURCES, IDENTITY_VERIFICATIONS, portrait_spec, default_portrait
 
 
 def artifact_kind_label(value, language="zh"):
@@ -373,6 +374,14 @@ class Store(RecoveryStoreMixin):
             for field in ("name_en", "note_en"):
                 if field not in agent_columns:
                     db.execute(f"ALTER TABLE agents ADD COLUMN {field} TEXT NOT NULL DEFAULT ''")
+            for field, definition in (("portrait", "TEXT NOT NULL DEFAULT ''"), ("identity_source", "TEXT NOT NULL DEFAULT 'unknown'"), ("identity_verification", "TEXT NOT NULL DEFAULT 'unknown'"), ("identity_evidence", "TEXT NOT NULL DEFAULT ''"), ("identity_observed_at", "REAL")):
+                if field not in agent_columns:
+                    db.execute(f"ALTER TABLE agents ADD COLUMN {field} {definition}")
+            # Lock the appearance already shown by the legacy read-only fallback.
+            # Backfill from the old palette before any later profile edit changes it.
+            for row in db.execute("SELECT id,avatar FROM agents WHERE portrait='' OR portrait IS NULL").fetchall():
+                db.execute('UPDATE agents SET portrait=? WHERE id=?',(default_portrait(row['id'],row['avatar']),row['id']))
+            db.execute("CREATE TABLE IF NOT EXISTS agent_profile_history (id INTEGER PRIMARY KEY, agent_id TEXT NOT NULL REFERENCES agents(id), name TEXT NOT NULL, name_en TEXT NOT NULL, changed_at REAL NOT NULL)")
             assignment_columns = {row[1] for row in db.execute("PRAGMA table_info(agent_assignments)")}
             if "work_type" not in assignment_columns:
                 db.execute("ALTER TABLE agent_assignments ADD COLUMN work_type TEXT NOT NULL DEFAULT 'unspecified'")
@@ -1014,6 +1023,10 @@ class Store(RecoveryStoreMixin):
                 record["artifacts"] = [row for row in closeout_files if row["record_id"] == record["id"]]
                 record["completed_at"] = completions.get(record["id"])
             agents = [dict(r) for r in db.execute("SELECT * FROM agents ORDER BY created ASC,id ASC")]
+            has_history = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_profile_history'").fetchone()
+            for agent in agents:
+                agent['portrait_spec'] = portrait_spec(agent)
+                agent['previous_names'] = [dict(r) for r in db.execute("SELECT name,name_en,changed_at FROM agent_profile_history WHERE agent_id=? ORDER BY changed_at DESC,id DESC", (agent['id'],))] if has_history else []
             agent_assignments = [dict(r) for r in db.execute("SELECT * FROM agent_assignments ORDER BY assigned_at ASC,task_id ASC")]
             agent_run_assignments = [dict(r) for r in db.execute("SELECT * FROM agent_run_assignments ORDER BY assigned_at,run_id,agent_id")] if "agent_run_assignments" in tables else []
             software = [dict(r) for r in db.execute("SELECT * FROM software ORDER BY created ASC LIMIT 100")]
@@ -1289,9 +1302,13 @@ def main():
     origin_cmd.add_argument("--commit-sha")
     agent = subs.add_parser("agent-register", help="Record an agent profile; does not create an executor")
     agent.add_argument("id"); agent.add_argument("--name", required=True)
-    agent.add_argument("--name-en", default=""); agent.add_argument("--avatar", choices=AGENT_AVATARS, default="mint")
+    agent.add_argument("--name-en", default=""); agent.add_argument("--avatar", choices=AGENT_AVATARS, default="mint"); agent.add_argument("--portrait", choices=PORTRAITS)
     profile = subs.add_parser("agent-profile")
-    profile.add_argument("id"); profile.add_argument("--name"); profile.add_argument("--name-en"); profile.add_argument("--avatar", choices=AGENT_AVATARS)
+    profile.add_argument("id"); profile.add_argument("--name"); profile.add_argument("--name-en"); profile.add_argument("--avatar", choices=AGENT_AVATARS); profile.add_argument("--portrait", choices=PORTRAITS)
+    identity = subs.add_parser("agent-identity", help="Record evidence for a panel-profile/executor match; never binds a session")
+    identity.add_argument("id"); identity.add_argument("--source", choices=IDENTITY_SOURCES, required=True)
+    identity.add_argument("--verification", choices=IDENTITY_VERIFICATIONS, required=True)
+    identity.add_argument("--evidence", required=True); identity.add_argument("--observed-at", required=True)
     observe = subs.add_parser("agent-observe")
     observe.add_argument("id"); observe.add_argument("--status", choices=AGENT_STATUSES, required=True)
     observe.add_argument("--observed-at", required=True); observe.add_argument("--note", default=""); observe.add_argument("--note-en", default="")
@@ -1382,9 +1399,11 @@ def main():
         elif args.command == "installation-observe":
             print(json.dumps(store.installation_observe(args.component, args.status, args.evidence, args.observed_at, args.skill_id, args.reference)))
         elif args.command == "agent-register":
-            print(store.agent_register(args.id,args.name,args.avatar,args.name_en))
+            print(store.agent_register(args.id,args.name,args.avatar,args.name_en,args.portrait))
         elif args.command == "agent-profile":
-            print(store.agent_profile(args.id,args.name,args.avatar,args.name_en))
+            print(store.agent_profile(args.id,args.name,args.avatar,args.name_en,args.portrait))
+        elif args.command == "agent-identity":
+            print(store.agent_identity(args.id,args.source,args.verification,args.evidence,args.observed_at))
         elif args.command == "agent-observe":
             print(store.agent_observe(args.id,args.status,args.observed_at,args.note,args.note_en))
         elif args.command == "agent-run-assign":

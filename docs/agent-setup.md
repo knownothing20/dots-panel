@@ -103,6 +103,7 @@ python3 "$SOURCE/scripts/workflow-skill.py" --export "$DATA/workflow-skill.zip"
 - 同一目标的实现、测试、修复、交付沿用一个 task_id；同一已接收请求的阶段与补充继续已有 run；新可执行请求用新 request-id接收为新run。已结束 run 不重开，后续工作仍在同一 task_id 下
 - 新目标才 `register`。登记失败先查是否已经成功，不重复派发执行者
 - 协调者先用 receive 与稳定 request-id 原子登记 waiting_external 待派发 run，并把 run_id/request-id 交给执行者；同请求重试幂等重用。实际派发前核对单主题占用，实际派发后立即登记友好稳定 profile、run关联并读回。执行者不得自行重复 start。人工记录观察时间。profile 不创建执行者；pending 初始化填 unknown，结束本轮填 idle
+- 昵称与头像固定，任务标题不得作为Agent名字；先核验实际执行者对应，再使用 `agent-identity` 记录人工核验时间与证据。不可核验的旧记录标历史，不合并不同执行者，不据昵称或头像推断永久会话
 - `agent-assign` 表示主负责人；`agent-run-assign` 为具体 run 增加参与者。并行多个执行者可关联同一 run，或同一活动中的各自 run；不要为了显示新参与者替换原负责人
 - 仅实际返回持久会话 ID 才用 `bind`；没有持久会话保持无绑定。禁止写内部 native worker 标识、运行路径、原始对话或隐藏推理
 - `ingest` 仅导入经过筛选的用户可见事件；稳定 source-event-id 保证重试去重。绑定和观察不能证明实时同步。精确参数及边界见 [任务接入](task-integration.md#真实会话绑定与增量摘要)
@@ -122,7 +123,7 @@ now() { python3 -c 'from datetime import datetime,timezone; print(datetime.now(t
 jsonfield() { python3 -c 'import json,sys; print(json.load(sys.stdin)[sys.argv[1]])' "$1"; }
 panel register setup-demo --name '合成安装验收' --project 'Synthetic setup'
 RUN=$(panel start setup-demo --note '隔离的CLI流程演练')
-panel agent-register setup-worker --name '示例执行者' --name-en 'Example worker'
+panel agent-register setup-worker --name '青芽' --name-en 'Qingya' --portrait leaf-mint
 panel agent-observe setup-worker --status running --observed-at "$(now)" --note '合成测试：CLI流程正在执行'
 panel agent-assign setup-demo setup-worker --work-type testing
 panel agent-run-assign "$RUN" setup-worker --work-type testing

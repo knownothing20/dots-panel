@@ -194,3 +194,14 @@ sh scripts/start.sh --data-dir "$DATA" progress-update "$RUN_ID" \
 Counts are optional, measured stage values, not overall task percentages. Both values and a unit are required together. Source IDs deduplicate retries and reject conflicting content; repeated identical content does not create a milestone. Records are retained in the private DATA database; snapshots read a bounded recent set. Existing databases remain readable without this optional table.
 
 The view prioritizes unfinished runs: a freshly observed participant explicitly assigned to a running run leads; otherwise the newest unfinished run leads. Only when none remain unfinished does it show the newest terminal run. Other unfinished runs remain visible in the parallel-run summary. Historical latest-run records are retained separately. The view uses the selected run's meaningful progress. A newer unscoped ordinary milestone is explicitly labeled as task-level and supersedes an older structured count; a milestone attributed to another run does not replace the selected run; a new run does not inherit old counts, and non-running runs do not show active measured progress. Assigned participants remain visible on their own run after observation expiry while original ownership stays intact. Other unfinished runs show their own IDs and assigned names, never impersonating the selected run. A fresh profile observation does not reactivate assignments to older topics after reassignment. Stale observations retain the last recorded state and are explicitly unconfirmed. Heartbeat timestamps and elapsed time do not become meaningful-work updates. The interface is still read-only and does not automatically collect tool output or guarantee Skill invocation.
+
+## 固定 Agent 身份与头像
+
+- `id` 是面板本地稳定编号；昵称、英文名、头像与任务职责各自独立。档案不创建平台会话，也不保证跨任务永久复用
+- 新执行者用独特固定昵称登记；任务名放活动/run，工作类型放 assignment。仅通过受支持工具核实为同一执行者时才复用编号
+- `agent-profile` 更正显示名或 `--portrait`，不替换任务关联或观察；旧显示名保留在历史
+- `agent-identity --source manual --verification observed --observed-at <time> --evidence <summary>` 记录一次真实对应关系核验；无法复核的旧档案用 historical/historical，未核实用 unknown/unknown。证据不得含内部运行标识或原始对话
+- 固定头像由 6 种原创头饰与 8 个配色组合，原生 Canvas 与 Web SVG 使用同一几何源。头像不是身份凭证；昵称、语言、当前职责或状态变化不会改变已选头像
+- 首页不再展示“需要你处理”汇总块；等待、暂停、验收状态以及原因、下一步、详情仍保留在任务卡和活动详情中
+
+旧schema升级会按旧avatar配色回填并锁定原已显示头像；后续legacy upsert更改配色不改变固定头像。新注册未显式选头像时，在同一写事务中优先分配未使用的48种样式；图谱用完或明确选择已有样式时可能重复，重复图形绝不等于同一执行者，也不会合并档案。身份核验时间和状态观察时间独立显示，分别取identity_observed_at和observed_at。

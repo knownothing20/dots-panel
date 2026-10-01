@@ -107,7 +107,8 @@ class NotificationState:
             person = people[0]
             card = {'id': key, 'task_id': task_id, 'title': str((tasks.get(task_id) or {}).get('name') or task_id or '')[:160],
                     'agent': str(person.get('name') or person.get('id') or '')[:80],
-                    'avatar': person.get('avatar', 'mint'), 'participants': len(people)}
+                    'avatar': person.get('avatar', 'mint'), 'participants': len(people),
+                    'agent_record': {field: person[field] for field in ('id', 'name', 'name_en', 'avatar', 'portrait', 'portrait_spec') if field in person}}
             if key in self.announced_runs:
                 existing = next((item for item in self.cards if item['id'] == key), None)
                 if existing is not None and existing != card:
