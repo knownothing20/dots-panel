@@ -1,12 +1,14 @@
-# dots panel
+# dots panel · OpenAI dot 云电脑辅助面板
 
-**交给 AI 的事，也能看得清。**
+**为 OpenAI dot 云电脑打造的开源辅助面板，让任务进度与成果看得见。**
 
 任务做到哪了？谁在处理？最后的文件在哪？
 
 dots panel 把分散的任务进度、执行者观察和成果文件，整理成一个轻量、私有、可自行安装的工作面板。少翻记录，少猜状态，下一次继续工作时知道从哪里接上。
 
-面向在 dot 云电脑上持续做开发、研究和内容制作的人。独立开源项目，非 OpenAI 官方产品；数据由执行者通过 CLI 或配套 Skill 工作流程主动登记。
+面向使用 **OpenAI dot / ChatGPT**，在 dot 云电脑上持续做开发、研究和内容制作的人。dots-panel 是独立的第三方开源辅助工具，**不是 OpenAI 官方产品，也未获 OpenAI 背书**；数据由执行者通过 CLI 或配套 Skill 工作流程主动登记。
+
+An open-source, third-party task dashboard for **OpenAI dot’s cloud computer in ChatGPT**. Keep registered tasks, agent observations, progress and output files together. Lightweight Python + SQLite, with desktop and optional local web views. Unofficial community project.
 
 **Python 3.10+ · 标准库 · SQLite · 原生桌面 / 可选 Web · 中文 / English · MIT**
 
@@ -16,6 +18,17 @@ dots panel 把分散的任务进度、执行者观察和成果文件，整理成
 
 ![任务总览示意：活动、状态与成果入口](docs/images/overview-demo.svg)
 *原创界面示意 / 合成数据，非实时截图。*
+
+## OpenAI dot 是什么？
+
+**dot 是 OpenAI 在 ChatGPT 中提供的持续型 AI 助手**：它拥有自己的云电脑，可以围绕你交代的目标推进工作，并在你的授权范围内使用连接的应用。访问你的本地电脑是另行连接与授权的能力，不等于打开这个面板就能控制本机。具体可用性以账户和平台当前支持情况为准。
+
+- [OpenAI 官方：开始使用你的 dot](https://help.openai.com/en/articles/20001530-getting-started-with-your-dot)
+- [OpenAI 官方：连接电脑和应用](https://learn.chatgpt.com/docs/dots/computers-and-apps)
+
+**dots-panel 为这个云电脑工作场景补充一层可检查的工作台。** 它把主动登记的活动、Agent 观察、阶段进展、成果文件和定时结果快照整理到一起，帮助你回答“做到哪了、接下来做什么、交付物在哪里”。
+
+安装 dots-panel 不会创建 dot、开通 ChatGPT 权益或替代平台原有的任务与权限系统；使用者需要先有可用的 dot 环境。
 
 ## 它解决什么问题？
 
