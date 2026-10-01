@@ -1,0 +1,16 @@
+'use strict';
+const assert = require('node:assert/strict');
+require('../web/i18n.js');
+const i18n = globalThis.PanelLocale;
+assert.equal(i18n.resolve('auto','zh-CN'),'zh');
+assert.equal(i18n.resolve('auto','zh-TW'),'zh');
+assert.equal(i18n.resolve('auto','zh_HK'),'zh');
+assert.equal(i18n.resolve('auto','en-US'),'en');
+assert.equal(i18n.resolve('auto','fr-FR'),'en');
+assert.equal(i18n.resolve('auto',''),'en');
+assert.equal(i18n.resolve('en','zh-CN'),'en');
+assert.equal(i18n.resolve('zh','en-US'),'zh');
+assert.equal(i18n.translate('已验证','en'),'Verified');
+assert.equal(i18n.translate('已验证','zh'),'已验证');
+assert.equal(i18n.translate('A user-authored title','en'),'A user-authored title');
+console.log('11 web locale assertions passed');

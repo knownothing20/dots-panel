@@ -1,0 +1,212 @@
+{
+  "version": "1.0.0",
+  "groups": [
+    {
+      "id": "files",
+      "title": {
+        "zh": "文件归档",
+        "en": "File organization"
+      },
+      "items": [
+        {
+          "id": "task-folders",
+          "level": "enforced",
+          "title": {
+            "zh": "任务固定目录",
+            "en": "Stable task folders"
+          },
+          "body": {
+            "zh": "通过task-init/register创建每任务inputs、outputs、tmp目录；标题或负责人变化不改变任务编号。",
+            "en": "task-init/register creates inputs, outputs and tmp for each stable task ID. Renaming or reassignment does not change that ID."
+          }
+        },
+        {
+          "id": "outputs",
+          "level": "enforced",
+          "title": {
+            "zh": "正式成果登记",
+            "en": "Registered outputs"
+          },
+          "body": {
+            "zh": "artifact-add复制正式成果到outputs，使用UTC时间、简短名称及唯一后缀；保留旧版，记录大小与内容校验值。不会扫描或自动归档所有文件。",
+            "en": "artifact-add copies verified outputs with a UTC timestamp, short slug and unique suffix, retaining prior files and recording size/hash. It does not scan or archive all files automatically."
+          }
+        },
+        {
+          "id": "inputs",
+          "level": "workflow",
+          "title": {
+            "zh": "输入与缓存",
+            "en": "Inputs and temporary files"
+          },
+          "body": {
+            "zh": "参考图片、文档放所属任务inputs；草稿和中间渲染放tmp。工具写到其他位置的成果，交付前主动归档；保留Library文件身份。",
+            "en": "Place reference images/documents in task inputs and drafts/renders in tmp. Explicitly archive outputs produced elsewhere before delivery; preserve Library identity."
+          }
+        },
+        {
+          "id": "inbox",
+          "level": "planned",
+          "title": {
+            "zh": "无任务资料",
+            "en": "Unassigned material"
+          },
+          "body": {
+            "zh": "规划统一收件箱接收尚无归属的资料；明确用途后再归档，不强行创建任务。尚未创建全机收件箱或迁移旧文件。",
+            "en": "Plan one inbox for material without a task, then classify it when its purpose is known. No global inbox or historical migration is implemented yet."
+          }
+        },
+        {
+          "id": "shared",
+          "level": "planned",
+          "title": {
+            "zh": "跨任务复用",
+            "en": "Shared references"
+          },
+          "body": {
+            "zh": "长期复用素材进入统一共享资料区；优先引用，需要锁定版本时才复制快照。共享区尚未落地，不自动整理旧文件。",
+            "en": "Use a shared reference area for reusable material. Prefer references and copy a snapshot only when a fixed version is needed. The shared area is not implemented; old files are not automatically reorganized."
+          }
+        },
+        {
+          "id": "code-projects",
+          "level": "workflow",
+          "title": {
+            "zh": "代码项目与一次性交付",
+            "en": "Code projects and one-off outputs"
+          },
+          "body": {
+            "zh": "长期维护的网页和程序放独立项目源码目录，任务保存资料、检查记录和交付快照；一次性单文件作品可从tmp制作并归档到outputs，不能把唯一成果只留在缓存。",
+            "en": "Keep maintained websites and programs in a dedicated source project; task folders retain references, checks and delivery snapshots. One-off single-file works may be drafted in tmp and archived to outputs; never leave the sole deliverable only in cache."
+          }
+        }
+      ]
+    },
+    {
+      "id": "software",
+      "title": {
+        "zh": "软件与安装",
+        "en": "Software and installation"
+      },
+      "items": [
+        {
+          "id": "source-data",
+          "level": "workflow",
+          "title": {
+            "zh": "源码与私有数据分开",
+            "en": "Separate source and private data"
+          },
+          "body": {
+            "zh": "面板运行数据保存在独立DATA中；任务目录和数据库不放进开源源码。公开发布前仍须人工核查文件清单。",
+            "en": "Panel runtime records live in private DATA separately from source. Keep task folders and databases out of public source; manually review publication contents."
+          }
+        },
+        {
+          "id": "install",
+          "level": "workflow",
+          "title": {
+            "zh": "沿用系统安装位置",
+            "en": "Respect system installation locations"
+          },
+          "body": {
+            "zh": "系统软件交给对应安装方式管理，不为统一目录搬动系统文件；配置、用户数据与缓存分开，核实实际桌面用户后再选择路径。",
+            "en": "Let the relevant installer manage system software. Do not relocate system files for tidiness; separate configuration, data and cache after verifying the actual desktop user."
+          }
+        },
+        {
+          "id": "portable",
+          "level": "planned",
+          "title": {
+            "zh": "手工软件独立版本目录",
+            "en": "Versioned portable applications"
+          },
+          "body": {
+            "zh": "规划apps/<app-id>/<version>，用户数据不放程序版本目录。此安装规则尚未实施，项目代码继续留在现有仓库。",
+            "en": "Plan apps/<app-id>/<version> with user data outside application versions. This installation layout is not implemented; source projects remain in their existing repositories."
+          }
+        },
+        {
+          "id": "discovery",
+          "level": "planned",
+          "title": {
+            "zh": "先发现再纳管",
+            "en": "Discover before managing"
+          },
+          "body": {
+            "zh": "软件发现计划读取明确来源，候选项确认后再纳管；检测到不等于运行中。当前仅白名单检测，无通用安装、卸载和进程控制。",
+            "en": "Planned discovery reads explicit sources and requires review before management. Detection does not imply running. Current support is allowlisted detection, not general installation, removal or process control."
+          }
+        },
+        {
+          "id": "safe-control",
+          "level": "workflow",
+          "title": {
+            "zh": "按能力提供操作",
+            "en": "Control only verified capabilities"
+          },
+          "body": {
+            "zh": "仅为已确认的软件实例提供其支持的操作；不按模糊名称结束进程。平台、桌面连接和系统组件保持只读。移除登记、卸载程序、删除数据分别处理。",
+            "en": "Expose operations only for verified instances with supported capabilities. Never stop processes by fuzzy names. Keep platform, desktop connection and system components read-only. Treat deregistration, uninstalling and data deletion separately."
+          }
+        }
+      ]
+    },
+    {
+      "id": "tasks",
+      "title": {
+        "zh": "任务与执行",
+        "en": "Tasks and execution"
+      },
+      "items": [
+        {
+          "id": "one-goal",
+          "level": "workflow",
+          "title": {
+            "zh": "同一目标沿用活动",
+            "en": "Reuse an activity for one goal"
+          },
+          "body": {
+            "zh": "同一目标的实现、测试、修复和交付记录在同一活动；复用经验证的执行身份，不能把面板登记冒充独立平台会话。",
+            "en": "Record implementation, testing, fixes and delivery for one goal in one activity. Reuse a verified executor identity; a panel record is not an independent platform conversation."
+          }
+        },
+        {
+          "id": "status",
+          "level": "workflow",
+          "title": {
+            "zh": "状态以证据为准",
+            "en": "Evidence-based status"
+          },
+          "body": {
+            "zh": "Agent状态与任务生命周期分开；职责表示当前工作类型，随任务变化。标明最近观察时间，未核实时显示未知，不伪造实时连接或完成。",
+            "en": "Separate agent state from task lifecycle. Work type follows the current assignment. Show observation time and unknown values where unverified; do not invent live connections or completion."
+          }
+        },
+        {
+          "id": "delivery",
+          "level": "workflow",
+          "title": {
+            "zh": "验证后交付",
+            "en": "Validate before delivery"
+          },
+          "body": {
+            "zh": "报告和图片按相应验证流程检查后登记；面板文件记录不等于已向用户提供下载。需要聊天附件时使用经验证的文件交付方式。",
+            "en": "Validate reports and images before registration. A panel record does not prove the user can download it; use a verified attachment workflow for chat delivery."
+          }
+        },
+        {
+          "id": "authority",
+          "level": "workflow",
+          "title": {
+            "zh": "不扩大授权",
+            "en": "Do not expand authorization"
+          },
+          "body": {
+            "zh": "这些是项目工作规范，不改变账户权限或平台安全要求。旧文件迁移、软件安装卸载、数据删除和公开发布按用户授权处理，不因显示规则而自动执行。",
+            "en": "These are project workflow guidelines, not account permissions or overrides of platform safeguards. Handle migration, installation, removal, deletion and public sharing under user authorization, never merely because a rule is displayed."
+          }
+        }
+      ]
+    }
+  ]
+}

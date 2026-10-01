@@ -1,0 +1,18 @@
+'use strict';
+const assert=require('node:assert/strict');
+require('../web/workspace.js');
+const tasks=[{id:'pending'},{id:'running'},{id:'done'},{id:'cancel'},{id:'failed'},{id:'older',latest_status:'succeeded'}];
+const runs=[{task_id:'running',status:'running',started:1,stale:true},{task_id:'done',status:'running',started:1},{task_id:'done',status:'succeeded',started:2},{task_id:'cancel',status:'cancelled',started:1},{task_id:'failed',status:'failed',started:1}];
+const rows=globalThis.PanelWorkspace.rows;
+assert.equal(rows(tasks,runs).length,6);
+assert.equal(rows(tasks,runs,'pending')[0].task.id,'pending');
+assert.equal(rows(tasks,runs,'running')[0].status,'running');
+assert.equal(rows(tasks,runs,'running')[0].stale,true);
+assert.equal(rows(tasks,runs,'succeeded').length,2);
+assert.equal(rows(tasks,runs,'cancelled')[0].task.id,'cancel');
+assert.equal(rows(tasks,runs,'failed')[0].task.id,'failed');
+assert.equal(rows([],[],'all').length,0);
+assert.equal(rows([{id:'search',name:'Release check',project:'Demo'}],[],'all','RELEASE').length,1);
+assert.equal(rows([{id:'search',name:'Release check',project:'Demo'}],[],'all','missing').length,0);
+assert.equal(rows([{id:'search',name:'Release check',project:'Demo'}],[],'all',' demo ').length,1);
+console.log('11 workspace assertions passed');
