@@ -78,7 +78,7 @@ MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
 LIBRARY_XATTRS = ("user.library-file-id", "user.library-file-version")
 
 from .outputs import output_summaries, validate_mp4_header
-from .agent_identity import PORTRAITS, IDENTITY_SOURCES, IDENTITY_VERIFICATIONS, portrait_spec, default_portrait
+from .agent_identity import PORTRAITS, IDENTITY_SOURCES, IDENTITY_VERIFICATIONS, portrait_spec, default_portrait, profile_short_ids
 
 
 def artifact_kind_label(value, language="zh"):
@@ -1024,11 +1024,13 @@ class Store(RecoveryStoreMixin):
                 record["completed_at"] = completions.get(record["id"])
             agents = [dict(r) for r in db.execute("SELECT * FROM agents ORDER BY created ASC,id ASC")]
             has_history = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_profile_history'").fetchone()
+            short_ids=profile_short_ids(agents)
             for agent in agents:
+                agent['panel_short_id']=short_ids[agent['id']]
                 agent['portrait_spec'] = portrait_spec(agent)
                 agent['previous_names'] = [dict(r) for r in db.execute("SELECT name,name_en,changed_at FROM agent_profile_history WHERE agent_id=? ORDER BY changed_at DESC,id DESC", (agent['id'],))] if has_history else []
             agent_assignments = [dict(r) for r in db.execute("SELECT * FROM agent_assignments ORDER BY assigned_at ASC,task_id ASC")]
-            agent_run_assignments = [dict(r) for r in db.execute("SELECT * FROM agent_run_assignments ORDER BY assigned_at,run_id,agent_id")] if "agent_run_assignments" in tables else []
+            agent_run_assignments = [dict(r) for r in db.execute("SELECT a.*, r.task_id FROM agent_run_assignments a JOIN runs r ON r.id=a.run_id ORDER BY a.assigned_at,a.run_id,a.agent_id")] if "agent_run_assignments" in tables else []
             software = [dict(r) for r in db.execute("SELECT * FROM software ORDER BY created ASC LIMIT 100")]
         for item in software:
             kind = item["kind"]

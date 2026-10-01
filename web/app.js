@@ -50,11 +50,10 @@ function renderPreferences() {
 const statuses = {waiting_user:'等待用户',waiting_external:'等待外部结果',paused:'已暂停记录',awaiting_review:'等待验收',pending:'待开始',running:'运行中', succeeded:'已完成', failed:'失败', cancelled:'已取消'};
 let busy = false;
 let workspaceFilter = 'all';
-let agentFilter='all',agentHistoryOpen=false,agentUnknownOpen=false,agentState=null;
 let adviceTaskId=null;
 let detailTab='timeline';
 const detailScrollPositions={timeline:0,files:0};
-const expandedAgents=new Set(), expandedRules=new Set(), expandedDiagnostics=new Set(), expandedSteps=new Set();
+const expandedRules=new Set(), expandedDiagnostics=new Set(), expandedSteps=new Set();
 let renderedTaskId=null;
 const expandedSchedules=new Set(), expandedSoftware=new Set(), expandedSkills=new Set();
 let workspaceQuery = '';
@@ -127,7 +126,7 @@ function renderStatusFilters(state) {
 }
 function showPage() {
   const requested=location.hash.slice(1);
-  const page=['overview','conversations','agents','schedules','software','rules','about','settings'].includes(requested)?requested:'overview';
+  const page=['overview','conversations','schedules','software','rules','about','settings'].includes(requested)?requested:'overview';
   for(const node of document.querySelectorAll('[data-page]'))node.hidden=node.dataset.page!==page;
   for(const node of document.querySelectorAll('[data-nav]')){node.classList.toggle('active',node.dataset.nav===page);if(node.dataset.nav===page)node.setAttribute('aria-current','page');else node.removeAttribute('aria-current');}
   panelNotifications?.markRead(page,page==='conversations'?$('task-filter').value||null:null);
@@ -256,7 +255,7 @@ function taskCard(task,run,state) {
   const work=PanelWorkspace.workProgress(state,task.id,run);run=work.current_run||run;
   const status=run?.status||task.latest_status||'pending';
   const card=element('article','','task-card '+status);card.title=t('选择此活动，查看阶段与记录');
-  const top=element('div','','task-card-top');top.append(element('span','▣','card-icon'),element('span',t(statuses[status]||status),'status '+status));
+  const top=element('div','','task-card-top');top.append(element('span','▣','card-icon'));const people=avatarGroup(task,state),badge=element('span',t(statuses[status]||status),'status '+status);top.append(people,badge);
   card.append(top,element('h2',task.name),element('p',task.project,'task-project'),ownerBadge(task.id,state));
   const summaryText=run?.lifecycle_reason||work.current_step||phrase('尚无工作进展摘要','No work progress recorded');
   card.append(element('small',run?.lifecycle_reason?phrase('状态原因','Status reason'):work.scope==='task'?phrase('任务最新摘要','Latest task update'):phrase('最近登记步骤','Latest recorded step'),'task-step-label'),element('p',summaryText,'task-summary'));
@@ -375,6 +374,26 @@ function identitySource(agent) {
   return ({manual:['人工核验','Manual verification'],historical:['历史留存','Historical records'],unknown:['来源未核验','Source unverified']}[agent.identity_source]||['来源未核验','Source unverified'])[language==='en'?1:0];
 }
 function taskOwner(taskId,state) { return PanelAgents.taskLead(state,taskId).agent; }
+function avatarGroup(task,state) {
+  const rows=PanelAgents.activityParticipants(state,task.id),group=element('button','','participant-avatar-group');group.type='button';group.hidden=!rows.length;
+  group.setAttribute('aria-label',phrase(`查看全部 ${rows.length} 位活动参与者`,`View all ${rows.length} activity participants`));
+  for(const row of rows.slice(0,3))group.append(agentAvatar(row.agent));
+  if(rows.length>3)group.append(element('span','+'+(rows.length-3),'participant-overflow'));
+  group.addEventListener('click',event=>{event.stopPropagation();selectTask(task);setDetailTab('timeline');$('task-participants').scrollIntoView?.({block:'start'});});return group;
+}
+function renderTaskParticipants(state,taskId) {
+  const area=$('task-participants');area.replaceChildren();const rows=PanelAgents.activityParticipants(state,taskId);area.hidden=!rows.length;if(!rows.length)return;
+  area.append(element('h3',phrase('活动参与者 · ','Activity participants · ')+rows.length));
+  for(const {agent,assignments} of rows){
+    const item=element('article','','activity-participant'),head=element('div','','agent-heading');head.append(agentAvatar(agent),element('strong',PanelAgents.reference(agent,language)));item.append(head);
+    const roles=[...new Set(assignments.map(a=>PanelAgents.type(a.work_type,language)))];item.append(element('p',phrase('已登记职责 · ','Recorded roles · ')+roles.join(' / ')));
+    const observed=PanelAgents.observation(agent,state),label=observed.recent?({running:['已观察运行','Observed running'],idle:['空闲','Idle'],blocked:['受阻','Blocked'],unavailable:['不可用','Unavailable']}[agent.status]||['状态未知','State unknown'])[language==='en'?1:0]:phrase('状态待核实','State unconfirmed');item.append(element('small',label+' · '+stamp(agent.observed_at)));
+    const detail=element('details','','participant-details');detail.dataset.disclosureKey='participant:'+taskId+':'+agent.id;detail.append(element('summary',t('详情')),element('p',phrase('昵称 · ','Nickname · ')+PanelAgents.text(agent,'name',language)),element('p',identityLabel(agent)),element('p',identitySource(agent)+' · '+stamp(agent.identity_observed_at)),element('p',phrase('面板短编号由完整档案ID派生，不是平台 UUID；不使用短片段匹配。','Panel short IDs derive from full profile IDs, not platform UUIDs; short fragments are never used for matching.')));
+    for(const assignment of assignments)detail.append(element('p',(assignment.run_id||phrase('负责人记录','Owner record'))+' · '+PanelAgents.type(assignment.work_type,language)));
+    item.append(detail);area.append(item);
+  }
+}
+
 function ownerBadge(taskId,state) {
   const lead=PanelAgents.taskLead(state,taskId),owner=lead.agent,row=element('div','','owner-badge');row.dataset.taskId=taskId;
   if(owner){
@@ -383,63 +402,14 @@ function ownerBadge(taskId,state) {
     const observed=(states[observation.status]||states.unknown)[language==='en'?1:0];
     const active=lead.active.some(agent=>agent.id===owner.id);
     const assigned=lead.assigned.some(agent=>agent.id===owner.id);
-    const caption=element('span',`${assigned?phrase('已分派参与者','Assigned participant'):t('负责人')} · ${PanelAgents.text(owner,'name',language)}${lead.assigned.length>1?' +'+(lead.assigned.length-1):''}${assigned?' · '+phrase('运行 ','Run ')+lead.run_id:''}`);
+    const role=(state.agent_run_assignments||[]).find(a=>a.agent_id===owner.id&&a.run_id===lead.run_id)?.work_type;
+    const caption=element('span',`${assigned?phrase('已分派参与者','Assigned participant'):t('负责人')} · ${PanelAgents.reference(owner,language)} · ${PanelAgents.type(role,language)}${lead.assigned.length>1?' +'+(lead.assigned.length-1):''}${assigned?' · '+phrase('运行 ','Run ')+lead.run_id:''}`);
     row.append(agentAvatar(owner),caption,element('small',`${phrase('人工观察','Manual observation')}: ${observed} · ${stamp(owner.observed_at)}${observation.known&&!observation.recent?phrase(' · 较早，当前待确认',' · Older; current state unconfirmed'):''}`));
     if(lead.assigned.length>1)row.append(element('small',phrase('本运行参与者：','Run participants: ')+PanelAgents.runNames(state,lead.run_id,language)));
     if(active)row.classList.add('observed-running');
   }else row.append(element('span',`${t('负责人')} · ${t('未分配')}`));
   return row;
 }
-function agentDirectoryCard(row,state) {
-  const agent=row.agent,card=element('article','','agent-row');card.dataset.agentId=agent.id;
-  const header=element('div','','agent-heading');
-  header.append(agentAvatar(agent),element('h2',PanelAgents.text(agent,'name',language)),element('span',PanelAgents.directoryLabel(row.historical?'historical':!row.verified?'unverified':row.state,language),'agent-state'));
-  if(row.state==='running')card.classList.add('observed-running');
-  const current=PanelAgents.directoryWork(row,language),currentLabel=element('p',current,'agent-current');currentLabel.title=current;
-  card.append(header,currentLabel);
-  const details=element('details','','agent-details');details.dataset.disclosureKey='agent:'+agent.id;details.open=expandedAgents.has(agent.id);
-  details.append(element('summary',t('详情')));
-  details.addEventListener('toggle',()=>{if(details.open)expandedAgents.add(agent.id);else expandedAgents.delete(agent.id);});
-  details.append(element('p',PanelAgents.directoryReason(row.reason,language)),element('p',`${t('面板标识')} · ${agent.id}`),element('p',identityLabel(agent)),
-    element('p',`${identitySource(agent)} · ${phrase('身份核验时间','Identity checked at')} ${stamp(agent.identity_observed_at)}`,'agent-identity-time'),
-    element('p',`${phrase('状态观察时间','Status observed at')} · ${stamp(agent.observed_at)}`,'agent-observed'));
-  if(agent.identity_evidence)details.append(element('p',agent.identity_evidence));
-  for(const previous of agent.previous_names||[])details.append(element('p',phrase('旧显示名（保留历史） · ','Previous label (history retained) · ')+PanelAgents.text(previous,'name',language)));
-  const note=PanelAgents.text(agent,'note',language);if(note)details.append(element('p',`${t('观察说明')} · ${note}`,'agent-note'));
-  const work=PanelAgents.work(state,agent);
-  for(const [group,title] of [['unfinished','负责的未完活动'],['recent','最近关联活动']]){
-    if(work[group].length)details.append(element('h3',t(title)));
-    for(const item of work[group]){const task=item.task,button=element('button',`${PanelAgents.type(item.work_type,language)} · ${PanelAgents.lifecycle(item.status,language)} · ${task.name} ›`,'agent-task-link');button.type='button';button.addEventListener('click',()=>selectTask(task));details.append(button);}
-  }
-  card.append(details);return card;
-}
-function renderAgents(state) {
-  agentState=state;
-  const directory=PanelAgents.directory(state),counts=directory.counts,focused=document.activeElement?.dataset?.focusKey;
-  $('agent-scope').textContent=phrase('已核实身份与近期执行观察','Verified identities and recent execution observations');
-  $('agent-count-help-title').textContent=phrase('计数说明','How counts work');
-  $('agent-count-help-text').textContent=phrase(`档案总数 ${counts.profiles}（含历史）。主计数与默认列表仅含非历史、已有人工身份核验证据的 Agent，不等于全平台在线人数或固定执行池。状态待核实只统计已核实身份目录中状态过期或关联待确认的记录；身份待核实与历史各自折叠，不进入顶部计数。工作中还须有近期运行观察与有效未暂停运行关联；待命不代表任务完成。每5秒重读本地登记。`,`Total profiles: ${counts.profiles}, including history. The main count and default list include only non-historical agents with manual identity-match evidence, not a platform-wide online count or fixed worker pool. State unconfirmed covers only verified identities with expired state or unconfirmed assignments; unknown identities and history have separate disclosures outside the top counts. Working also requires a recent running observation and a valid non-paused open run assignment; standby does not mean tasks are complete. Local records refresh every 5 seconds.`);
-  const toolbar=$('agent-summary');toolbar.replaceChildren();
-  for(const key of ['all','running','idle','unconfirmed','blocked','unavailable']){
-    if(['blocked','unavailable'].includes(key)&&!counts[key]&&agentFilter!==key)continue;
-    const button=element('button','','agent-stat');button.type='button';button.dataset.focusKey='agent-filter:'+key;button.setAttribute('aria-pressed',String(agentFilter===key));
-    button.append(element('strong',String(counts[key]),'agent-stat-value'),element('span',PanelAgents.directoryLabel(key,language)));
-    button.addEventListener('click',()=>{agentFilter=key;renderAgents(agentState);});toolbar.append(button);
-    if(focused===button.dataset.focusKey)button.focus({preventScroll:true});
-  }
-  const visible=directory.rows.filter(row=>row.verified&&(agentFilter==='all'||row.state===agentFilter)),historical=directory.rows.filter(row=>row.historical),unknown=directory.rows.filter(row=>!row.historical&&!row.verified);
-  $('agent-cards').replaceChildren(...visible.map(row=>agentDirectoryCard(row,state)));
-  if(!visible.length)$('agent-cards').append(element('p',historical.length?phrase('历史档案可在下方展开','Expand historical profiles below'):phrase('此筛选下暂无档案','No profiles match this filter'),'empty-caption'));
-  const pending=$('agent-unknown');pending.hidden=!unknown.length;pending.open=agentUnknownOpen;
-  $('agent-unknown-title').textContent=PanelAgents.directoryLabel('unverified',language)+' · '+unknown.length;
-  $('agent-unknown-cards').replaceChildren(...(agentUnknownOpen?unknown.map(row=>agentDirectoryCard(row,state)):[]));
-  const history=$('agent-history');history.hidden=!historical.length;history.open=agentHistoryOpen;
-  $('agent-history-title').textContent=PanelAgents.directoryLabel('historical',language)+' · '+historical.length;
-  $('agent-history-cards').replaceChildren(...(agentHistoryOpen?historical.map(row=>agentDirectoryCard(row,state)):[]));
-}
-$('agent-unknown').addEventListener('toggle',()=>{agentUnknownOpen=$('agent-unknown').open;if(agentState)renderAgents(agentState);});
-$('agent-history').addEventListener('toggle',()=>{agentHistoryOpen=$('agent-history').open;if(agentState)renderAgents(agentState);});
-
 function renderCloseout(run,state) {
   const pinned=$('closeout-pinned'),body=$('closeout-summary'),record=run?.closeout;
   pinned.replaceChildren();body.replaceChildren();pinned.hidden=!record;body.hidden=!record&&run?.status!=='succeeded';
@@ -484,7 +454,7 @@ function render(state) {
   $('recovery-notice').hidden=!state.recovery;
   $('recovery-notice').textContent=state.recovery?.[language==='en'?'notice_en':'notice_zh']||'';
   renderRules(state.rules);
-  renderAgents(state);
+
   renderAbout(state.about);
   const m = state.metrics;
   $('scope').textContent = t(m.scope);
@@ -519,7 +489,7 @@ function render(state) {
   const chosenRun=chosen?PanelWorkspace.rows([chosen],state.current_runs||state.latest_runs||state.runs)[0].run:null;
   renderAdvice(chosen,chosenRun);
   renderCloseout(chosenRun,state);
-  renderFiles(state,selected);
+  renderFiles(state,selected);renderTaskParticipants(state,selected);
   renderOutputBar(state,selected);
   $('detail-status').textContent=chosen?t(statuses[chosenRun?.status||chosen.latest_status||'pending']):'';
   $('detail-updated').textContent=chosen?`${t('最近更新')} ${stamp(chosenRun?.progress_updated||chosenRun?.updated||chosen.created)}`:'';
@@ -606,7 +576,7 @@ async function refresh() {
   if (busy) return;
   busy = true; $('refresh').disabled = true;
   try { const response = await fetch('/api/state',{cache:'no-store',signal:AbortSignal.timeout(4000)}); if(!response.ok) throw new Error('offline'); render(await response.json()); $('connection').textContent = phrase('本地数据','Local data')+' · '+phrase('每 5 秒','Every 5s')+' · '+headerStamp(lastState?.metrics?.sampled_at)+' · '+headerRegion(lastState?.exit_region); $('connection').title=lastState?.exit_region?'ipwho.is · '+stamp(lastState.exit_region.checked_at):''; $('indicator').classList.remove('offline'); }
-  catch (_) { if(lastState){const view=captureView($('task-filter').value);renderAgents(lastState);for(const id of ['task-list','active-work','task-agent'])for(const badge of $(id).querySelectorAll?.('.owner-badge')||[])badge.replaceWith(ownerBadge(badge.dataset.taskId,lastState));restoreView(view,$('task-filter').value);} $('connection').textContent = t('连接中断 · 显示上次数据'); $('indicator').classList.add('offline'); }
+  catch (_) { if(lastState){const view=captureView($('task-filter').value);for(const id of ['task-list','active-work','task-agent'])for(const badge of $(id).querySelectorAll?.('.owner-badge')||[])badge.replaceWith(ownerBadge(badge.dataset.taskId,lastState));restoreView(view,$('task-filter').value);} $('connection').textContent = t('连接中断 · 显示上次数据'); $('indicator').classList.add('offline'); }
   finally {busy = false; $('refresh').disabled = false;}
 }
 $('workspace-search').addEventListener('input',()=>{workspaceQuery=$('workspace-search').value;if(lastState)render(lastState);});

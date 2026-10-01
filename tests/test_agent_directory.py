@@ -107,48 +107,11 @@ class AgentDirectoryTests(unittest.TestCase):
         self.assertEqual(json.loads(output),[agent_directory(s['snapshot'],s['now']) for s in scenarios])
 
 
-class NativeAgentDirectoryTests(unittest.TestCase):
-    def viewer(self):
-        view=Dashboard.__new__(Dashboard);view.language='en';view.timezone='UTC';view.muted='gray';view.fg='black';view.bg='white';view.tk=Mock();view.root=Mock()
-        view.scroll_area=Mock();view.label=Mock();view.card_grid=Mock();view.compact_row=Mock();view.filter_chip=Mock();view.render_page=Mock();view.t=lambda x:x
-        view.snapshot=fixture();view.snapshot['agents'][0]['observed_at']=time.time();view.selected_agent=None
-        return view
-
-    def test_history_hidden_filters_compact_cards_and_detail_evidence(self):
-        view=self.viewer();historical=copy.deepcopy(view.snapshot['agents'][0]);historical.update(id='old',name='History',identity_source='historical',identity_verification='historical')
-        view.snapshot['agents'].append(historical);view.render_agents()
-        self.assertEqual(view.compact_row.call_count,1)
-        summary=view.compact_row.call_args.args[2]
-        self.assertIn('Meaningful task',summary);self.assertNotIn('Identity checked',summary);self.assertNotIn('Status observed',summary)
-        view.toggle_agent_history();view.compact_row.reset_mock();view.render_agents();self.assertEqual(view.compact_row.call_count,2)
-        view.set_agent_filter('running');view.compact_row.reset_mock();view.render_agents();self.assertEqual(view.compact_row.call_count,2)
-        view.selected_agent='one';view.compact_row.reset_mock();view.render_agents();details=view.compact_row.call_args_list[0].args[2]
-        self.assertIn('Identity checked at',details);self.assertIn('Status observed at',details)
-
-    def test_unverified_identity_has_separate_closed_disclosure(self):
-        view=self.viewer();unknown=copy.deepcopy(view.snapshot['agents'][0]);unknown.update(id='unknown',name='Unverified example',identity_verification='unknown')
-        view.snapshot['agents'].append(unknown);view.agent_count_help_open=True;view.render_agents()
-        self.assertEqual(view.compact_row.call_count,1)
-        labels=[call.args[1] for call in view.filter_chip.call_args_list]
-        self.assertIn('1  Verified agents',labels);self.assertIn('0  State unconfirmed',labels)
-        self.assertTrue(any('Unverified identities · 1' in text for text in labels))
-        view.toggle_agent_unknown();view.compact_row.reset_mock();view.render_agents()
-        self.assertEqual(view.compact_row.call_count,2)
-        self.assertEqual(view.compact_row.call_args.args[3],'Unverified identities')
-
-    def test_standby_expiration_changes_refresh_signature(self):
-        view=self.viewer();view.page='agents';view.selected_task=None;view.workspace_filter='all';view.search_query=Mock();view.search_query.get.return_value=''
-        view.snapshot=fixture('idle')
-        with patch('dots_panel.desktop_view.time.time',return_value=110):before=view.view_signature()
-        with patch('dots_panel.desktop_view.time.time',return_value=300):after=view.view_signature()
-        self.assertNotEqual(before,after)
-
-    def test_agent_details_have_their_own_scroll_identity(self):
-        view=self.viewer();view.page='agents';view.selected_task=None;view.selected_agent=None
-        self.assertEqual(view.viewport_key(),('agents',None))
-        view.selected_agent='one';self.assertEqual(view.viewport_key(),('agents','one'))
-        view.page='conversations';view.selected_task='task';self.assertEqual(view.viewport_key(),('conversations','task'))
-
+class ActivityParticipantViewTests(unittest.TestCase):
+    def test_agent_page_and_shortcut_target_removed(self):
+        from dots_panel.desktop_view import PAGE_NAMES
+        self.assertNotIn('agents',PAGE_NAMES);self.assertEqual(len(PAGE_NAMES),7)
+        self.assertFalse(hasattr(Dashboard,'render_agents'))
 
 class UnfinishedRunSummaryTests(unittest.TestCase):
     def test_paused_history_is_retained_but_not_counted_as_parallel(self):

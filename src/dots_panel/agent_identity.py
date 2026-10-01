@@ -113,3 +113,14 @@ def draw_portrait(canvas, agent, x=0, y=0, size=56):
                 canvas.create_polygon(*coords, fill=fill, outline='')
             else:
                 canvas.create_line(*coords, fill=a['stroke'], width=a['stroke-width']*scale, capstyle='round', joinstyle='round')
+
+
+def profile_short_ids(agents):
+    """Display-only local profile fingerprints; full stored IDs remain join keys."""
+    full={a['id']:hashlib.sha256(('panel-profile\0'+a['id']).encode()).hexdigest() for a in agents}
+    result={}
+    for key,value in full.items():
+        length=8
+        while length<64 and any(other!=key and digest[:length]==value[:length] for other,digest in full.items()):length+=4
+        result[key]=value[:length]
+    return result

@@ -177,8 +177,8 @@ class PanelTests(unittest.TestCase):
                 if 'data-nav' in attrs: self.nav.append(attrs['data-nav'])
         parser=Pages()
         parser.feed((ROOT / 'web/index.html').read_text())
-        self.assertEqual(set(parser.pages), {'overview','conversations','agents','schedules','software','rules','about','settings'})
-        self.assertEqual(len(parser.pages), 8)
+        self.assertEqual(set(parser.pages), {'overview','conversations','schedules','software','rules','about','settings'})
+        self.assertEqual(len(parser.pages), 7)
         self.assertEqual(parser.nav, parser.pages)
 
     def test_web_markup_is_balanced_and_ids_unique(self):

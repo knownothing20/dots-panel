@@ -138,14 +138,14 @@ class AgentIdentityTests(unittest.TestCase):
         view=Dashboard.__new__(Dashboard);view.language='en';view.timezone='UTC';view.muted='gray';view.fg='black'
         view.scroll_area=Mock();view.label=Mock();view.card_grid=Mock();view.compact_row=Mock();view.selected_agent=None;view.tk=Mock();view.root=Mock();view.filter_chip=Mock();view.bg='white';view.t=lambda x:x;view.show_agent_history=True
         view.snapshot={'agents':[{'id':'one','name':'Qingya','status':'running','observed_at':1,'portrait':'wave-teal','identity_verification':'historical'}],'tasks':[{'id':'task','name':'Original work'}],'runs':[{'id':'run','task_id':'task','status':'running'}],'agent_run_assignments':[{'run_id':'run','agent_id':'one','work_type':'review'}]}
-        view.render_agents();call=view.compact_row.call_args
-        self.assertEqual(call.kwargs['avatar']['id'],'one');self.assertEqual(call.args[1],'Qingya')
-        self.assertNotIn('Identity checked at',call.args[2]);self.assertIn('Current task unconfirmed',call.args[2]);self.assertEqual(call.args[3],'Historical profiles')
+        view.detail_meta=True;view.render_task_participants(Mock(),'task');call=view.compact_row.call_args
+        self.assertEqual(call.kwargs['avatar']['id'],'one');self.assertTrue(call.args[1].startswith('Panel ID '))
+        self.assertIn('Review',call.args[2])
         agent=view.snapshot['agents'][0]
         agent.update(identity_source='manual',identity_observed_at=946684800,observed_at=1609459200)
-        view.selected_agent='one';view.compact_row.reset_mock();view.render_agents();summary=view.compact_row.call_args_list[0].args[2]
+        view.compact_row.reset_mock();view.render_task_participants(Mock(),'task');summary=view.compact_row.call_args_list[0].args[2]
         identity_line=next(line for line in summary.splitlines() if 'Identity checked at' in line)
-        status_line=next(line for line in summary.splitlines() if 'Status observed at' in line)
+        status_line=view.compact_row.call_args_list[0].args[3]
         self.assertIn('2000-01-01',identity_line);self.assertNotIn('2021-01-01',identity_line)
         self.assertIn('2021-01-01',status_line);self.assertNotIn('2000-01-01',status_line)
 

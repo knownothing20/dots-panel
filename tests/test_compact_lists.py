@@ -14,6 +14,6 @@ class ReconstructedCompactTests(unittest.TestCase):
         self.assertNotIn('#task-list.task-grid{display:flex;flex-direction:column',css)
     def test_all_seven_navigation_destinations(self):
         html=(ROOT/'web/index.html').read_text()
-        for page in ('overview','conversations','agents','schedules','software','rules','about'):
+        for page in ('overview','conversations','schedules','software','rules','about','settings'):
             self.assertEqual(html.count('data-nav="'+page+'"'),1)
             self.assertEqual(html.count('data-page="'+page+'"'),1)

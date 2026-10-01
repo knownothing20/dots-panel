@@ -99,6 +99,14 @@ globalThis.PanelWorkspace = {
 
 // Human-configured profile variants; never machine-translate user text.
 globalThis.PanelAgents = {
+  reference(agent,language='zh') {return (language==='en'?'Panel ID ':'面板编号 ')+(agent.panel_short_id||agent.id);},
+  activityParticipants(state,taskId) {
+    const agents=new Map((state.agents||[]).map(a=>[a.id,a])),runs=new Map(['runs','latest_runs','open_runs','current_runs'].flatMap(key=>state[key]||[]).map(r=>[r.id,r])),grouped=new Map();
+    for(const link of state.agent_run_assignments||[]){if((link.task_id||runs.get(link.run_id)?.task_id)!==taskId||!agents.has(link.agent_id))continue;if(!grouped.has(link.agent_id))grouped.set(link.agent_id,[]);grouped.get(link.agent_id).push({run_id:link.run_id,work_type:link.work_type||'unspecified',assigned_at:link.assigned_at??null,source:'run'});}
+    for(const link of state.agent_assignments||[])if(link.task_id===taskId&&agents.has(link.agent_id)&&!grouped.has(link.agent_id))grouped.set(link.agent_id,[{run_id:null,work_type:link.work_type||'unspecified',assigned_at:link.assigned_at??null,source:'owner'}]);
+    const rows=[...grouped].map(([id,assignments])=>({agent:agents.get(id),assignments:assignments.sort((a,b)=>(b.assigned_at||0)-(a.assigned_at||0)||(a.run_id||'').localeCompare(b.run_id||''))}));
+    return rows.sort((a,b)=>(b.assignments[0].assigned_at||0)-(a.assignments[0].assigned_at||0)||a.agent.id.localeCompare(b.agent.id));
+  },
   directory(state,now=Date.now()/1000) {
     const finite=value=>typeof value==='number'&&Number.isFinite(value);
     const agents=[...new Map((state.agents||[]).map(a=>[a.id,a])).values()],tasks=new Map((state.tasks||[]).map(t=>[t.id,t]));
@@ -170,7 +178,7 @@ globalThis.PanelAgents = {
     return {agent:active[0]||assigned[0]||owner,owner,active,assigned,run_id:current?.id||null};
   },
   runNames(state,runId,language='zh') {
-    return (state.agent_run_assignments||[]).filter(link=>link.run_id===runId).map(link=>(state.agents||[]).find(agent=>agent.id===link.agent_id)).filter(Boolean).map(agent=>this.text(agent,'name',language)).join(', ');
+    return (state.agent_run_assignments||[]).filter(link=>link.run_id===runId).map(link=>({link,agent:(state.agents||[]).find(agent=>agent.id===link.agent_id)})).filter(row=>row.agent).map(({link,agent})=>this.reference(agent,language)+' · '+this.type(link.work_type,language)).join(', ');
   },
   lifecycle(status, language='zh') {
     const labels={waiting_user:['等待用户','Waiting for user'],waiting_external:['等待外部结果','Waiting for external result'],paused:['已暂停记录','Recorded as paused'],awaiting_review:['等待验收','Awaiting review'],pending:['待开始','Pending'],running:['进行中','Running'],succeeded:['已完成','Succeeded'],failed:['失败','Failed'],cancelled:['已取消','Cancelled']};

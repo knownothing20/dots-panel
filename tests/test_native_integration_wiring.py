@@ -57,7 +57,7 @@ class NativeIntegrationWiringTests(TestCase):
         view=self.viewer();view.workspace_toolbar=Mock();view.scroll_area=Mock(return_value=Mock());view.compact_row=Mock(return_value=Mock());view.workspace_filter='all';view.search_query=Mock();view.search_query.get.return_value=''
         view.snapshot={'agents':[{'id':'owner','name':'Example Owner','status':'idle','observed_at':1}],'agent_assignments':[{'agent_id':'owner','task_id':'task'}]}
         view.rows=[{'id':'task','status':'pending','warning':'','values':('Task','Project','Pending','Testing','—','Stamp')}]
-        view.render_conversation_list();summary=view.compact_row.call_args.args[2];self.assertIn('Example Owner',summary);self.assertIn('空闲',summary)
+        view.render_conversation_list();summary=view.compact_row.call_args.args[2];self.assertIn('面板编号 194b0635',summary);self.assertIn('空闲',summary)
     def test_overview_canvas_draws_recorded_owner(self):
         from types import SimpleNamespace
         from unittest.mock import patch
@@ -68,7 +68,7 @@ class NativeIntegrationWiringTests(TestCase):
         draw=next(call.args[1] for call in canvas.bind.call_args_list if call.args[0]=='<Configure>')
         with patch('tkinter.font.Font') as font:
             font.return_value.measure.return_value=40;draw(SimpleNamespace(width=500))
-        texts=[call.kwargs.get('text','') for call in canvas.create_text.call_args_list];self.assertTrue(any('Example Owner' in text and '空闲' in text for text in texts))
+        texts=[call.kwargs.get('text','') for call in canvas.create_text.call_args_list];self.assertTrue(any('面板编号 194b0635' in text and '空闲' in text for text in texts))
     def test_image_preview_geometry_fits_landscape_and_portrait(self):
         from dots_panel.desktop_view import image_preview_geometry
         for image in ((1672,941),(941,1672),(100,3000)):

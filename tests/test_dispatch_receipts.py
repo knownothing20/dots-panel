@@ -113,7 +113,7 @@ class AssignmentIdentityTests(unittest.TestCase):
                 self.assertIn('Assigned participant', participant_caption(p, 'en'))
                 self.assertEqual(p['current_run_id'], 'run')
                 self.assertIn('current state unconfirmed', participant_observation(p['lead']['agent'], s, 'en', 400))
-        self.assertEqual(run_participant_names(self.s, 'run', 'en'), 'Assigned worker')
+        self.assertIn('Panel ID ',run_participant_names(self.s,'run','en'))
 
     def test_current_run_scope_does_not_borrow_waiting_participant(self):
         self.s['runs'].append({'id':'new','task_id':'goal','status':'waiting_external','started':200})
@@ -122,7 +122,7 @@ class AssignmentIdentityTests(unittest.TestCase):
         self.assertEqual(p['assigned_participants'], [])
         self.assertEqual(p['lead']['agent']['id'], 'owner')
         self.assertEqual(len(p['open_runs']), 2)
-        self.assertEqual(run_participant_names(self.s, 'run'), 'Assigned worker')
+        self.assertIn('面板编号 ',run_participant_names(self.s,'run'))
 
     def test_new_topic_does_not_reanimate_older_assignment(self):
         self.s['runs'].append({'id':'other-run','task_id':'other','status':'running','started':85})

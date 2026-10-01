@@ -9,7 +9,7 @@ assert.equal(PanelAgents.taskLead(s,'goal',400).assigned[0].id,'worker');
 assert.equal(PanelAgents.taskLead(s,'goal',400).active.length,0);
 assert.equal(PanelAgents.observation(s.agents[0],s,400).recent,false);
 assert.equal(PanelAgents.taskLead({...s,agent_assignments:[]},'goal',400).agent.id,'worker');
-assert.equal(PanelAgents.runNames(s,'run','en'),'Assigned worker');
+assert.ok(PanelAgents.runNames(s,'run','en').startsWith('Panel ID '));
 assert.equal(JSON.stringify(s),before);
 for(const status of ['unknown','idle']) {
  const state={...s,agents:s.agents.map(a=>a.id==='worker'?{...a,status}:a)};
@@ -21,7 +21,7 @@ assert.equal(PanelAgents.taskLead(s,'goal',400).run_id,'waiting');
 assert.equal(PanelAgents.taskLead(s,'goal',400).assigned.length,0);
 assert.equal(PanelAgents.taskLead(s,'goal',400).agent.id,'owner');
 assert.equal(PanelWorkspace.workProgress(s,'goal',null,400).open_runs.length,2);
-assert.equal(PanelAgents.runNames(s,'run','en'),'Assigned worker');
+assert.ok(PanelAgents.runNames(s,'run','en').startsWith('Panel ID '));
 console.log('Assigned identity, stale observation and per-run parallel attribution checks passed');
 
 const reassigned={...s,runs:[...s.runs,{id:'other',task_id:'new-goal',status:'running',started:85}],agent_run_assignments:[...s.agent_run_assignments,{agent_id:'worker',run_id:'other',assigned_at:90}]};

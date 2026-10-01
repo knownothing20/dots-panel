@@ -59,6 +59,10 @@ Long-term context retention has no fixed guarantee. At meaningful stage boundari
 - Record observed executor state separately from task lifecycle. Show idle when its turn finishes; a larger project can remain unfinished. Preserve unfinished assignments and recent completed activities separately.
 - Keep user-facing summaries and optional English descriptions factual. Keep original task titles and source text unless an explicit translated variant exists. Never copy internal worker transcripts or identifiers into the panel.
 
+## Show participants within their activity
+
+Keep executor profiles as stable task associations, not a standalone global inventory. Current activity cards show only their recorded participants: original portrait, a display-only panel short ID, assignment work_type and last observed state. Deduplicate the same profile across runs. Preserve old profile/assignment/event records even when an independent Agent list is absent. Never match on a short prefix, nickname, role or task title; use the full verified panel profile key and actual supported-source evidence. A derived panel short ID is not a platform UUID. Local refresh does not query platform executors. Do not import another execution tree as the current one or promise automatic discovery. Do not rewrite historical event roles from the latest work_type; complete role-validity history needs an explicit model and evidence.
+
 ## Archive every task deliverable
 
 Read [references/task-files.md](references/task-files.md) before producing reports, images or other user-facing files. Resolve the existing task and its private folder first; use the same folder for every stage. Verify each deliverable, register it through the installed panel's supported file command, and confirm that its task file list contains it before claiming it is archived. A temporary file or a chat message alone is not a registered deliverable. Preserve Library identity and use the current Library workflow when delivery in chat requires an attachment.
