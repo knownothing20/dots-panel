@@ -207,7 +207,7 @@ class NativeNotifications:
         for page, button in self.view.nav_buttons.items():
             if page not in counts:
                 continue
-            base = self.view.t({'conversations':'活动','agents':'Agent','schedules':'定时任务','about':'关于与版本'}[page])
+            base = self.view.t({'conversations':'任务','agents':'Agent','schedules':'自动化','about':'关于与版本'}[page])
             marker = ('  NEW' if page == 'about' else '  ●') if counts[page] else ''
             button.configure(text=base+marker)
             if not counts[page]:

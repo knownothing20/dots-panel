@@ -1,13 +1,14 @@
 """New integration checks that call native renderers instead of checking presence alone."""
 from unittest import TestCase
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
+from types import SimpleNamespace
 from dots_panel.desktop_view import Dashboard, PAGE_NAMES
 
 class NativeIntegrationWiringTests(TestCase):
     def viewer(self):
         view=Dashboard.__new__(Dashboard)
         view.motion=Mock()
-        view.tk=Mock();view.root=Mock();view.root.winfo_children.return_value=[]
+        view.tk=Mock();view.card_grid=Mock(return_value=Mock());view.live_updates=[];view.root=Mock();view.root.winfo_children.return_value=[]
         view.t=lambda value,**kwargs:value
         view.label=Mock(return_value=Mock());view.button=Mock(return_value=Mock());view.filter_chip=Mock(return_value=Mock())
         view.bg='white';view.fg='black';view.muted='gray';view.accent='green';view.panel='white';view.tint='white'
@@ -37,10 +38,10 @@ class NativeIntegrationWiringTests(TestCase):
     def test_software_details_expand_without_starting_services(self):
         view=self.viewer();view.scroll_area=Mock(return_value=Mock());view.compact_row=Mock(return_value=Mock())
         view.snapshot={'software':[{'id':'panel','name':'Panel','kind':'dots-panel','description':'Description','available':True,'version':'0.2.0','controls':['close_current_viewer']}]}
-        view.expanded_software={'panel'};view.render_software()
+        view.close_viewer=Mock();view.expanded_software={'panel'};view.render_software()
         labels=[str(call.args[1]) for call in view.label.call_args_list]
         self.assertTrue(any('简介: Description' in label for label in labels));self.assertTrue(any('类型: dots-panel' in label for label in labels))
-        self.assertTrue(any(call.args[2]==view.close_viewer for call in view.filter_chip.call_args_list))
+        close=next(call.args[2] for call in view.filter_chip.call_args_list if call.args[1]=='关闭此窗口');close();view.close_viewer.assert_called_once()
         view.toggle_registry_detail('software','panel');self.assertEqual(view.expanded_software,set());view.render_page.assert_called()
     def test_schedule_expansion_shows_registry_boundary(self):
         view=self.viewer();view.scroll_area=Mock(return_value=Mock());view.compact_row=Mock(return_value=Mock())
@@ -53,14 +54,13 @@ class NativeIntegrationWiringTests(TestCase):
         view=self.viewer()
         with patch('tkinter.messagebox.askyesno',return_value=False):view.close_viewer()
         view.root.destroy.assert_not_called()
-    def test_activity_rows_render_recorded_owner(self):
-        view=self.viewer();view.workspace_toolbar=Mock();view.scroll_area=Mock(return_value=Mock());view.compact_row=Mock(return_value=Mock());view.workspace_filter='all';view.search_query=Mock();view.search_query.get.return_value=''
-        view.snapshot={'agents':[{'id':'owner','name':'Example Owner','status':'idle','observed_at':1}],'agent_assignments':[{'agent_id':'owner','task_id':'task'}]}
-        view.rows=[{'id':'task','status':'pending','warning':'','values':('Task','Project','Pending','Testing','—','Stamp')}]
-        view.render_conversation_list();summary=view.compact_row.call_args.args[2];self.assertIn('面板编号 194b0635',summary);self.assertIn('空闲',summary)
-    def test_overview_canvas_draws_recorded_owner(self):
-        from types import SimpleNamespace
-        from unittest.mock import patch
+    def test_activity_list_reuses_bounded_overview_card(self):
+        view=self.viewer();view.workspace_toolbar=Mock();view.scroll_area=Mock(return_value=Mock());view.workspace_filter='all';view.search_query=Mock();view.search_query.get.return_value='';view.airy_task_card=Mock(return_value=Mock())
+        view.snapshot={'tasks':[{'id':'task'}]}
+        row={'id':'task','status':'pending','warning':'','values':('Task','Project','Pending','Testing','—','Stamp')};view.rows=[row]
+        view.render_conversation_list();self.assertIs(view.airy_task_card.call_args.args[1],row)
+        view.background_refresh();view.airy_task_card.assert_called_once()
+    def test_compact_card_omits_owner_evidence_and_run_ids(self):
         view=self.viewer();view.live_updates=[];view.font='sans';view.surface_layers=Mock();view.round_shape=Mock();view.pill=Mock();view.cut_text=lambda value,*args:value
         view.snapshot={'agents':[{'id':'owner','name':'Example Owner','status':'idle','observed_at':1}],'agent_assignments':[{'agent_id':'owner','task_id':'task'}],'activity':[]}
         row={'id':'task','status':'pending','run':None,'warning':'','values':('Task','Project','Pending','Testing','—','Stamp')}
@@ -68,7 +68,9 @@ class NativeIntegrationWiringTests(TestCase):
         draw=next(call.args[1] for call in canvas.bind.call_args_list if call.args[0]=='<Configure>')
         with patch('tkinter.font.Font') as font:
             font.return_value.measure.return_value=40;draw(SimpleNamespace(width=500))
-        texts=[call.kwargs.get('text','') for call in canvas.create_text.call_args_list];self.assertTrue(any('面板编号 194b0635' in text and '空闲' in text for text in texts))
+        texts=[call.kwargs.get('text','') for call in canvas.create_text.call_args_list]
+        self.assertFalse(any('面板编号' in text or '运行 ' in text or '最后观察' in text for text in texts))
+        self.assertTrue(any('Task' in text for text in texts))
     def test_image_preview_geometry_fits_landscape_and_portrait(self):
         from dots_panel.desktop_view import image_preview_geometry
         for image in ((1672,941),(941,1672),(100,3000)):

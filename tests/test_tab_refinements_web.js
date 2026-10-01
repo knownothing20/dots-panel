@@ -33,6 +33,7 @@ class Node {
   get firstChild(){return this.children[0];}
   get lastElementChild(){return this.children.at(-1);}
 }
+require('./dom_patch_fixture.js')(Node,()=>document);
 const ids=new Map();
 for(const match of fs.readFileSync('web/index.html','utf8').matchAll(/\bid="([^"]+)"/g)){const node=new Node();node.id=match[1];ids.set(match[1],node);}
 document={body:new Node(),documentElement:{},activeElement:null,createTreeWalker(){return {nextNode(){return false;}};},getElementById(id){assert(ids.has(id),'Real HTML ID required: '+id);return ids.get(id);},createElement:tag=>new Node(tag),createTextNode:text=>Object.assign(new Node('#text'),{textContent:text}),querySelectorAll(selector){return [...ids.values()].flatMap(walk).filter(node=>matches(node,selector));}};
@@ -64,9 +65,9 @@ const activeButton=flatten($('task-list')).find(n=>n.dataset.focusKey==='task-de
 assert.equal(document.activeElement.closest('[data-page]').dataset.page,'conversations','Duplicate card actions retain focus within the visible page');
 const selected=$('task-filter'),options=selected.children;selected.focus();render({...state,tasks:[{...task,name:'Changed title'}]});assert.equal(selected.children,options,'Focused select is not rebuilt during polling');
 const measured={...state,progress_updates:[{id:'measured',run_id:'run',created:46,current_step:'Check six cases',result:'Case inventory verified',next_step:'Finish checks',evidence:'Six synthetic assertions',completed:0,total:6,unit:'checks'}]};
-render(measured);assert(textOf($('task-list')).includes('Check six cases'));assert(textOf($('task-list')).includes('0 / 6 checks'));assert(textOf($('task-list')).includes('Next: Finish checks'));
+render(measured);assert(textOf($('task-list')).includes('Check six cases'));assert(textOf($('task-list')).includes('0 / 6 checks'));assert($('task-list').children[0].title.includes('Next: Finish checks'));assert(textOf($('task-lifecycle-meta')).includes('Next: Finish checks'));
 const progress=flatten($('task-list')).find(n=>n.tag==='progress');assert.equal(progress.value,0);assert.equal(progress.max,6);
-const steps=flatten($('task-list')).find(n=>n.className==='task-steps');let stopped=false;steps.listeners.click({stopPropagation(){stopped=true;}});assert(stopped,'Expanding step evidence does not navigate away');
+assert(!flatten($('task-list')).some(n=>n.className==='task-steps'),'Card does not expand long evidence');assert(textOf($('task-lifecycle-meta')).includes('Six synthetic assertions'),'Evidence is accessible in detail');
 // Restore the same visible item when newer records are inserted above it.
 const scroller=$('detail-scroll'),anchor=element('div','Anchor','event');anchor.dataset.timelineKey='stable';anchor.top=96;anchor.height=30;scroller.top=100;scroller.replaceChildren(anchor);scroller.scrollTop=180;
 const view=captureView(task.id);anchor.top=156;scroller.scrollTop=0;window.scrollY=0;restoreView(view,task.id);
@@ -81,10 +82,10 @@ const backup={...run,id:'backup',status:'succeeded',note:'Backup completed',star
 const parallelState={...state,runs:[backup],latest_runs:[backup],current_runs:[ui],open_runs:[ui,decision],agents:[{id:'active',name:'Current contributor',status:'running',observed_at:Date.now()/1000-1}],agent_run_assignments:[{agent_id:'active',run_id:'ui'}],progress_updates:[{id:'ui-step',run_id:'ui',created:40,current_step:'Review the interface',result:'Checked',next_step:'Finish review',evidence:'Test fixture',completed:2,total:4,unit:'checks'}],activity:[{id:60,task_id:task.id,created:60,stage:'state_changed',message:'Backup is complete'}],events:[{id:60,run_id:'backup',created:60,message:'Backup is complete'}]};
 $('task-filter').value=task.id;render(parallelState);
 assert.equal($('detail-status').textContent,'Running');
-let card=$('task-list').children[0];assert.equal(card.className,'task-card running');assert(textOf(card).includes('Review the interface'));assert(!textOf(card).includes('Backup is complete'));assert(textOf(card).includes('Unfinished runs · 2'));assert(textOf(card).includes('Approve the scope'),'Other waiting run remains inspectable');
+let card=$('task-list').children[0];assert.equal(card.className,'task-card running');assert(textOf(card).includes('Review the interface'));assert(!textOf(card).includes('Backup is complete'));assert(textOf($('task-agent')).includes('Unfinished runs · 2'));assert(textOf($('task-lifecycle-meta')).includes('Approve the scope'),'Other waiting run remains inspectable in detail');
 assert($('activity-tabs').children[1].textContent.includes('1'),'Unfinished filter agrees with the card');
 const noExecution={...parallelState,agents:[],agent_run_assignments:[]};render(noExecution);card=$('task-list').children[0];assert.equal(card.className,'task-card waiting_user');assert.equal($('detail-status').textContent,'Waiting for user');assert(textOf(card).includes('Scope confirmation'));assert(!flatten(card).some(node=>node.tag==='progress'),'Waiting cards do not inherit running measurements');
-const taskNote={...parallelState,activity:[{id:70,task_id:task.id,created:70,stage:'review',message:'Task-wide observation'}]};render(taskNote);card=$('task-list').children[0];assert(textOf(card).includes('Latest task update'));assert(textOf(card).includes('Task-wide observation'));assert(!flatten(card).some(node=>node.tag==='progress'));
+const taskNote={...parallelState,activity:[{id:70,task_id:task.id,created:70,stage:'review',message:'Task-wide observation'}]};render(taskNote);card=$('task-list').children[0];assert(!textOf(card).includes('Latest task update'),'Card keeps only the concise summary');assert(textOf(card).includes('Task-wide observation'));assert(!flatten(card).some(node=>node.tag==='progress'));
 language='en';
 const scheduled=rule=>({platform_observation:{enabled:true,timezone:'Asia/Shanghai',schedule:rule,observed_at:100}});
 assert(schedulePlatformView(scheduled('RRULE:FREQ=DAILY;BYHOUR=8;BYMINUTE=30')).compact.startsWith('Daily 08:30'));
@@ -95,4 +96,4 @@ assert(css.includes('.activity-toolbar{display:grid;grid-template-columns:minmax
 assert(css.includes('#detail-scroll{scrollbar-gutter:stable;overscroll-behavior:contain;overflow-anchor:none;min-height:0'));
 assert(!css.includes('animation:')||!css.includes('infinite'),'No perpetual fake activity animation');
 `,context);
-console.log('Eight-tab refresh refinements: measured progress, heartbeat distinction, preserved scroll/anchor/disclosures/focus, stable select, responsive toolbar and safe step expansion passed');
+console.log('Eight-tab refresh refinements: measured progress, heartbeat distinction, preserved scroll/anchor/disclosures/focus, stable select, responsive toolbar and bounded cards with detail-only evidence passed');

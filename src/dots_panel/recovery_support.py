@@ -67,16 +67,29 @@ class RecoveryStoreMixin:
         return {'agent_id':agent_id,'task_id':task_id}
 
     def agent_run_assign(self, run_id, agent_id, work_type='unspecified'):
-        from .app import WORK_TYPES
-        if work_type not in WORK_TYPES: raise ValueError('Invalid assignment work type')
+        from .app import WORK_TYPES, OPEN_STATUSES
+        import uuid
+        if work_type not in WORK_TYPES:
+            raise ValueError('Invalid assignment work type')
         with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
             if not db.execute('SELECT 1 FROM agents WHERE id=?',(agent_id,)).fetchone():
                 raise ValueError('Unknown agent ID')
-            if not db.execute('SELECT 1 FROM runs WHERE id=?',(run_id,)).fetchone():
+            run = db.execute('SELECT status FROM runs WHERE id=?',(run_id,)).fetchone()
+            if not run:
                 raise ValueError('Unknown run ID')
-            db.execute('INSERT INTO agent_run_assignments VALUES(?,?,?,?) ON CONFLICT(run_id,agent_id) DO UPDATE SET work_type=excluded.work_type',
-                       (run_id,agent_id,work_type,time.time()))
-        return {'run_id':run_id,'agent_id':agent_id,'record_only':True}
+            current = db.execute('SELECT * FROM assignment_episodes WHERE run_id=? AND agent_id=? ORDER BY assigned_at DESC,id DESC LIMIT 1',(run_id,agent_id)).fetchone()
+            if current and current['work_type']==work_type and (run['status'] not in OPEN_STATUSES or current['ended_at'] is None and current['provenance']=='explicit'):
+                return {'run_id':run_id,'agent_id':agent_id,'assignment_id':current['id'],'record_only':True,'deduplicated':True}
+            if run['status'] not in OPEN_STATUSES:
+                raise ValueError('Cannot change assignments of a finished run')
+            now = time.time()
+            if current and current['ended_at'] is None:
+                db.execute('UPDATE assignment_episodes SET ended_at=?,end_reason=? WHERE id=?',(now,'Role changed',current['id']))
+            assignment_id = uuid.uuid4().hex
+            db.execute('INSERT INTO assignment_episodes VALUES(?,?,?,?,?,NULL,?,?)',(assignment_id,run_id,agent_id,work_type,now,'','explicit'))
+            db.execute('INSERT INTO agent_run_assignments VALUES(?,?,?,?) ON CONFLICT(run_id,agent_id) DO UPDATE SET work_type=excluded.work_type,assigned_at=excluded.assigned_at',(run_id,agent_id,work_type,now))
+        return {'run_id':run_id,'agent_id':agent_id,'assignment_id':assignment_id,'record_only':True,'deduplicated':False}
 
     def agent_register(self, key, name, avatar='mint', name_en='', portrait=None):
         import sqlite3

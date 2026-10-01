@@ -115,7 +115,7 @@ panel status
 
 Keep panel-local keys unchanged and nicknames/portraits fixed. Never name a new profile after its task or role. For an authorized correction, use `agent-profile KEY --name FIXED_NICKNAME --name-en FIXED_ENGLISH_NAME --portrait CONFIRMED_UNUSED_STYLE`; previous display labels remain in history. `agent-identity` records a match observation, not a platform binding, live connection, permanent executor or future reuse guarantee. Use `--source historical --verification historical` for retained records that cannot currently be matched, with actual inspection time and evidence. The portrait catalog is original code/vector artwork; it provides no identity verification. Without --portrait, new registration allocates an unused style atomically while one is available. Explicit selections and an exhausted 48-style catalog can repeat styles; never merge identities based on matching portraits. Identity provenance uses identity_observed_at; executor state has its separate observed_at.
 
-Use an existing profile for the same verified executor. `agent-run-assign` is idempotent per run/profile and permits parallel participants without replacing the activity's primary owner. It does not start a worker. Record unknown for unconfirmed/pending initialization. A finished worker turn becomes idle only after observation; waiting or incomplete goal runs remain open. When the installed CLI lacks this operation, record the tracking gap and upgrade only with authorization; never silently overwrite another assignment.
+Use an existing profile for the same verified executor. `agent-run-assign` is idempotent for the same current run/profile/role and permits parallel participants without replacing the activity's primary owner. It returns `assignment_id`. A changed role closes the old immutable episode and creates another. Reconfirming a legacy snapshot creates a new explicit episode; it does not rewrite unknown history. It does not start a worker. Record unknown for unconfirmed/pending initialization. A finished worker turn becomes idle only after observation; waiting or incomplete goal runs remain open. When the installed CLI lacks this operation, record the tracking gap and upgrade only with authorization; never silently overwrite another assignment.
 
 ## Current step without a lifecycle transition
 
@@ -126,3 +126,30 @@ panel progress-update "$RUN_ID" --current-step "$STEP" --result "$RESULT" --next
 ```
 
 Use the installed help as authoritative. This appends an explicit user-facing milestone without changing lifecycle, primary owner or executor control. Retries with the same ID/content are deduplicated; a reused ID with different content is rejected. Completed and total must be supplied together with a unit and satisfy 0 <= completed <= total. Terminal runs cannot accept new progress. These counts are observations, not computed estimates of overall project completion. Read-only UIs retain assigned identities per run, separately label fresh running observations or older unconfirmed observations, and show recent meaningful steps, but do not synthesize progress from heartbeat or elapsed time.
+
+
+## Activity-centered collaboration and immutable attribution
+
+Verify these installed commands before using them. All are local records, not executor dispatch or synchronization.
+
+```sh
+panel register "$TASK_ID" --name "$NAME" --project "$LABEL" --kind task --collaboration-mode single
+panel activity-structure "$TASK_ID" --collaboration-mode team --reason "$ACTUAL_PARTICIPANT_PLAN"
+# Only for distinct deliverables, with an existing root project:
+panel register "$CHILD_ID" --name "$CHILD_NAME" --project "$LABEL" --parent-task-id "$PROJECT_ID"
+panel agent-run-assign "$RUN_ID" "$PANEL_AGENT_KEY" --work-type design
+# Use the actual assignment_id from that result:
+panel progress-update "$RUN_ID" --assignment-id "$ASSIGNMENT_ID" --current-step "$STEP" --result "$RESULT" --next-step "$NEXT" --evidence "$EVIDENCE" --source-event-id "$STABLE_ID"
+panel assignment-end "$ASSIGNMENT_ID" --reason "$OBSERVED_END"
+panel timeline "$TASK_ID" --include-children --limit 100 --offset 0
+```
+
+`register --kind project` creates a project record. The existing `project` text is only a label and never implies a parent. `activity-structure` accepts kind, collaboration mode, parent-task-id or clear-parent plus required reason. It rejects missing parents, self-links, nested projects and converting a project with children into a task. Adding scope to a finished project requires a new authorized parent run. Keep any scope changes explicit and reviewable. single/team is independent from task/project; two participants may share one task with no children. Classification is explicit, not inferred from historical records or automatically changed by assignment.
+
+An assignment episode keeps immutable run, agent, role, assignment time and provenance. Ending it records the end once. A terminal run rejects role changes. Legacy migration preserves only its last stored association as `legacy_snapshot`, without inventing earlier roles or authors. Existing participant APIs remain compatible as latest-association projections; historical display uses episodes.
+
+`progress-update`, `log`, `activity` and `ingest` accept `--assignment-id`. New attribution requires an open matching assignment, an unfinished run, and an explicitly verified manual actor identity. Ingestion also requires the actual binding and cannot predate the chosen assignment. For late historical events without a verified open episode, leave authorship unrecorded rather than falsifying it. Attribution freezes actor name, original portrait key, panel-local short ID, role and assignment ID. Local IDs are not platform IDs. Older rows without this evidence remain `historical_unattributed`; never backfill from current ownership. Existing un-attributed ingest retries keep the legacy first-write-wins behavior, while attributed retries reject conflicting content or actor data.
+
+The scoped `timeline` query reads beyond the bounded overview snapshot. Filters `--agent-id`, `--work-type` and `--child-task-id` combine with AND semantics; agent and role filters accept `unattributed`. Each page returns total, offset, limit and has_more. Its read-only local HTTP equivalent is `/api/collaboration-timeline`, with task_id, include_children, agent_id, work_type, child_task_id, limit and offset query parameters. None of these calls fetch platform conversations. A current page or bounded snapshot is not the complete history until pagination is exhausted.
+
+The coordinator remains responsible for actual dispatch and run ownership. Keep one topic per executor even when sibling tasks share a parent. A parent closeout checks every child's latest outcome and all open child runs, then requires its own integration/delivery evidence. Do not silently remove an unfinished child to pass the gate. No separate Agent page, automatic inventory, periodic ten-minute scan or scheduler is part of this workflow.

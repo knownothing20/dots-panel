@@ -26,13 +26,13 @@ vm.runInContext(`
 const observed=Date.now()/1000;
 const agents=Array.from({length:6},(_,i)=>({id:'p'+i,panel_short_id:'0000000'+i,name:'Private nickname '+i,portrait:'leaf-sky',status:'running',observed_at:observed,identity_source:'manual',identity_verification:'observed'}));
 const task={id:'task',name:'Actual activity'},state={agents,tasks:[task],runs:[{id:'one',task_id:'task',status:'running',started:1},{id:'two',task_id:'task',status:'succeeded',started:0},{id:'other',task_id:'elsewhere',status:'running',started:2}],agent_run_assignments:[...agents.slice(0,5).map((a,i)=>({agent_id:a.id,run_id:'one',assigned_at:i+1,work_type:'development'})),{agent_id:'p0',run_id:'two',work_type:'review',assigned_at:0},{agent_id:'p5',run_id:'other',assigned_at:100,work_type:'research'}]};
-const before=JSON.stringify(state),rows=PanelAgents.activityParticipants(state,'task');assert.equal(rows.length,5);assert.ok(!rows.some(r=>r.agent.id==='p5'));assert.equal(rows.find(r=>r.agent.id==='p0').assignments.length,2);
-const group=avatarGroup(task,state);assert.equal(group.children.length,4);assert.equal(group.children[3].textContent,'+2');assert.equal(group.attrs['aria-label'],'View all 5 activity participants');
-const card=taskCard(task,state.runs[0],state),top=card.children[0];assert.equal(top.children[1].className,'participant-avatar-group');assert.ok(top.children[2].className.includes('status'));
+const before=JSON.stringify(state),rows=PanelAgents.activityParticipants(state,'task');assert.equal(rows.length,5);assert.ok(!rows.some(r=>r.agent.id==='p5'));assert.equal(rows.find(r=>r.agent.id==='p0').assignments.length,1);
+const group=avatarGroup(task,state);assert.equal(group.children.length,4);assert.equal(group.children[3].textContent,'+2');assert.equal(group.attrs['aria-label'],'View all 5 task participants');
+const card=taskCard(task,state.runs[0],state),top=card.children.find(n=>n.className==='task-card-top');assert.equal(top.children[1].className,'participant-avatar-group');assert.ok(top.children[2].className.includes('status'));
 renderTaskParticipants(state,'task');assert.equal($('task-participants').children.length,6);assert.equal($('task-participants').children[1].children[0].children[1].textContent,'Panel ID 00000004');assert.ok($('task-participants').children[1].children[1].textContent.includes('Development'));
 assert.ok(!$('task-participants').children[1].children[0].children[1].textContent.includes('Private nickname'));
 const stale={...state,agents:agents.map(a=>({...a,observed_at:observed-400}))};renderTaskParticipants(stale,'task');assert.ok($('task-participants').children[1].children[2].textContent.includes('State unconfirmed'));
-const retained={...state,runs:[],agent_run_assignments:[{agent_id:'p0',run_id:'outside-window',task_id:'task',work_type:'writing',assigned_at:1}]};assert.equal(PanelAgents.activityParticipants(retained,'task').length,1);
+const retained={...state,runs:[],agent_run_assignments:[{agent_id:'p0',run_id:'outside-window',task_id:'task',work_type:'writing',assigned_at:1}]};assert.equal(PanelAgents.activityParticipants(retained,'task').length,0);
 language='zh';renderTaskParticipants(state,'task');assert.equal($('task-participants').children[1].children[0].children[1].textContent,'面板编号 00000004');assert.equal(JSON.stringify(state),before);
 `,context);
 assert.ok(!ids.has('page-agents'));assert.ok(!ids.has('agent-history'));assert.ok(!ids.has('agent-unknown'));

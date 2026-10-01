@@ -30,8 +30,8 @@ globalThis.PanelWorkspace = {
   timeline(state, taskId) {
     const runs=new Map([...(state.runs||[]),...(state.latest_runs||[]),...(state.current_runs||[]),...(state.open_runs||[])].filter(row=>!taskId||row.task_id===taskId).map(row=>[row.id,row]));
     const rows=(state.activity||[]).filter(row=>!taskId||row.task_id===taskId).map(row=>({...row,kind:'activity',key:'activity:'+row.id}));
-    const mirrors=new Set(rows.map(row=>JSON.stringify([row.task_id,row.created,row.message])));
-    for(const row of state.events||[])if(runs.has(row.run_id)&&!mirrors.has(JSON.stringify([runs.get(row.run_id).task_id,row.created,row.message])))rows.push({...row,kind:'event',task_id:runs.get(row.run_id).task_id,key:'event:'+row.id});
+    const mirrors=new Set(rows.filter(row=>!row.attribution).map(row=>JSON.stringify([row.task_id,row.created,row.message])));
+    for(const row of state.events||[])if(runs.has(row.run_id)&&(row.attribution||!mirrors.has(JSON.stringify([runs.get(row.run_id).task_id,row.created,row.message]))))rows.push({...row,kind:'event',task_id:runs.get(row.run_id).task_id,key:'event:'+row.id});
     for(const row of runs.values())if(row.note)rows.push({id:row.id,run_id:row.id,task_id:row.task_id,created:row.started,message:row.note,kind:'note',key:'note:'+row.id});
     const rank={activity:0,event:1,note:2},compare=(a,b)=>a<b?-1:a>b?1:0;
     return rows.sort((a,b)=>(Number(b.created)||0)-(Number(a.created)||0)||rank[a.kind]-rank[b.kind]||compare(String(a.id??''),String(b.id??''))||compare(a.message||'',b.message||''));
@@ -90,22 +90,33 @@ globalThis.PanelWorkspace = {
       if (!latest.has(run.task_id) || run.started > latest.get(run.task_id).started || (run.started === latest.get(run.task_id).started && (run.id||'') > (latest.get(run.task_id).id||''))) latest.set(run.task_id, run);
     }
     const snapshot=state||{tasks,runs};
+    const priority=status=>status==='running'?0:['succeeded','cancelled','failed'].includes(status)?2:1;
     return tasks.map(task => {
       const run = PanelWorkspace.runSelection(snapshot,task.id).current || latest.get(task.id) || null;
       return {task, run, status:run?.status || task.latest_status || 'pending', stale:Boolean(run?.stale)};
-    }).filter(row => (filter === 'all' || row.status === filter || (filter === 'unfinished' && ['pending','running','waiting_user','waiting_external','paused','awaiting_review'].includes(row.status))) && (!query.trim() || `${row.task.name || ''} ${row.task.project || ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))).sort((a,b)=>Number(['succeeded','cancelled'].includes(a.status))-Number(['succeeded','cancelled'].includes(b.status))||PanelWorkspace.meaningfulUpdated(snapshot,b.task.id)-PanelWorkspace.meaningfulUpdated(snapshot,a.task.id)||(a.task.id<b.task.id?-1:a.task.id>b.task.id?1:0));
+    }).filter(row => (filter === 'all' || row.status === filter || (filter === 'unfinished' && ['pending','running','waiting_user','waiting_external','paused','awaiting_review'].includes(row.status))) && (!query.trim() || `${row.task.name || ''} ${row.task.project || ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))).sort((a,b)=>priority(a.status)-priority(b.status)||PanelWorkspace.meaningfulUpdated(snapshot,b.task.id)-PanelWorkspace.meaningfulUpdated(snapshot,a.task.id)||(a.task.id<b.task.id?-1:a.task.id>b.task.id?1:0));
   }
 };
 
 // Human-configured profile variants; never machine-translate user text.
 globalThis.PanelAgents = {
   reference(agent,language='zh') {return (language==='en'?'Panel ID ':'面板编号 ')+(agent.panel_short_id||agent.id);},
-  activityParticipants(state,taskId) {
-    const agents=new Map((state.agents||[]).map(a=>[a.id,a])),runs=new Map(['runs','latest_runs','open_runs','current_runs'].flatMap(key=>state[key]||[]).map(r=>[r.id,r])),grouped=new Map();
-    for(const link of state.agent_run_assignments||[]){if((link.task_id||runs.get(link.run_id)?.task_id)!==taskId||!agents.has(link.agent_id))continue;if(!grouped.has(link.agent_id))grouped.set(link.agent_id,[]);grouped.get(link.agent_id).push({run_id:link.run_id,work_type:link.work_type||'unspecified',assigned_at:link.assigned_at??null,source:'run'});}
-    for(const link of state.agent_assignments||[])if(link.task_id===taskId&&agents.has(link.agent_id)&&!grouped.has(link.agent_id))grouped.set(link.agent_id,[{run_id:null,work_type:link.work_type||'unspecified',assigned_at:link.assigned_at??null,source:'owner'}]);
-    const rows=[...grouped].map(([id,assignments])=>({agent:agents.get(id),assignments:assignments.sort((a,b)=>(b.assigned_at||0)-(a.assigned_at||0)||(a.run_id||'').localeCompare(b.run_id||''))}));
-    return rows.sort((a,b)=>(b.assignments[0].assigned_at||0)-(a.assignments[0].assigned_at||0)||a.agent.id.localeCompare(b.agent.id));
+  activityParticipants(state,taskId,now=Date.now()/1000) {
+    const run=PanelWorkspace.runSelection(state,taskId,now).current;
+    if(!run||!['pending','running','waiting_user','waiting_external','awaiting_review'].includes(run.status))return [];
+    const agents=new Map((state.agents||[]).map(a=>[a.id,a])),links=new Map(),episodes=new Map();
+    for(const [source,group] of [[state.agent_run_assignments||[],links],[state.assignment_episodes||[],episodes]])for(const entry of source){
+      if(entry.run_id!==run.id||(entry.task_id??taskId)!==taskId||!agents.has(entry.agent_id))continue;
+      if(!group.has(entry.agent_id))group.set(entry.agent_id,[]);group.get(entry.agent_id).push(entry);
+    }
+    const rows=[];
+    for(const id of new Set([...links.keys(),...episodes.keys()])){
+      const candidates=(episodes.has(id)?episodes.get(id).filter(a=>a.ended_at==null):links.get(id)).filter(a=>typeof a.assigned_at==='number'&&Number.isFinite(a.assigned_at)&&a.assigned_at>=0&&a.assigned_at<=now);
+      if(!candidates.length)continue;
+      const assignment=candidates.slice().sort((a,b)=>b.assigned_at-a.assigned_at||(b.id||'').localeCompare(a.id||''))[0];
+      rows.push({agent:agents.get(id),assignments:[{run_id:run.id,work_type:assignment.work_type||'unspecified',assigned_at:assignment.assigned_at,source:'run'}]});
+    }
+    return rows.sort((a,b)=>b.assignments[0].assigned_at-a.assignments[0].assigned_at||a.agent.id.localeCompare(b.agent.id));
   },
   directory(state,now=Date.now()/1000) {
     const finite=value=>typeof value==='number'&&Number.isFinite(value);
@@ -208,5 +219,105 @@ globalThis.PanelAgents = {
       }
     }
     return result;
+  }
+};
+
+
+// Explicit event attribution only. Assignment history is never evidence of authorship.
+globalThis.PanelCollaboration = {
+  palette:['#eef5ef','#edf3fa','#f8f0e8','#f1eef8','#f8edf1','#eef5f5'],
+  scope(state,taskId,includeChildren=true) {
+    const task=(state.tasks||[]).find(row=>row.id===taskId),ids=new Set(taskId?[taskId]:[]);
+    if(includeChildren&&task?.activity_kind==='project')for(const child of state.tasks||[])if(child.parent_task_id===taskId)ids.add(child.id);
+    return ids;
+  },
+  participants(state,taskId) {
+    const merged=new Map();
+    for(const id of this.scope(state,taskId))for(const row of PanelAgents.activityParticipants(state,id)){
+      if(!merged.has(row.agent.id))merged.set(row.agent.id,{...row,assignments:[...row.assignments]});
+      else merged.get(row.agent.id).assignments.push(...row.assignments);
+    }
+    return [...merged.values()];
+  },
+  mode(task,language='zh') {
+    const en=language==='en';
+    if(task?.mode_source!=='explicit')return en?'Unclassified':'未分类';
+    const parts=[];if(task?.activity_kind==='project')parts.push(en?'Project':'项目');
+    if(task?.collaboration_mode==='team')parts.push(en?'Team':'团队');else if(task?.collaboration_mode==='single')parts.push(en?'Single':'单人');
+    return parts.join(' · ');
+  },
+  matchesMode(task,filter) {
+    return filter==='all'||task?.mode_source==='explicit'&&(filter==='project'?task.activity_kind==='project':task.collaboration_mode===filter);
+  },
+  automationSource(state,taskId) {
+    const relation=(state.automation_bindings||[]).find(b=>b.task_id===taskId&&b.verified===true&&b.automation_id);
+    return relation?String(relation.name||relation.automation_id):null;
+  },
+  actor(row,state,language='zh') {
+    const a=row.attribution;
+    if(!a?.agent_id)return {known:false,label:language==='en'?'Anonymous':'匿名',role:language==='en'?'Role unrecorded':'职责未记录',color:'#f3f4ef',agent:null,id:'unattributed'};
+    const key=/^[a-f0-9]{8}$/i.test(a.color_key||'')?a.color_key:'00000000';
+    const agent={id:a.agent_id,name:a.actor_name||'',name_en:a.actor_name_en||'',portrait:a.portrait||'',portrait_spec:a.portrait_spec,panel_short_id:a.actor_short_id||(language==='en'?'ID unrecorded':'编号未记录')};
+    return {known:true,label:(language==='en'&&a.actor_name_en)||a.actor_name||agent.panel_short_id,shortId:agent.panel_short_id,role:PanelAgents.type(a.work_type||'unspecified',language),color:this.palette[parseInt(key,16)%this.palette.length],agent,id:a.agent_id,assignmentId:a.assignment_id,workType:a.work_type||'unspecified'};
+  },
+  rows(state,taskId,filters={}) {
+    const ids=this.scope(state,taskId,filters.includeChildren!==false);
+    const rows=[...ids].flatMap(id=>PanelWorkspace.timeline(state,id));
+    return this.filter(rows,filters).sort((a,b)=>(b.created||0)-(a.created||0)||a.key.localeCompare(b.key));
+  },
+  filter(rows,{agent='',role='',task=''}={}) {
+    return rows.filter(row=>(!task||row.task_id===task)&&(!agent||(row.attribution?.agent_id||'unattributed')===agent)&&(!role||(row.attribution?.work_type||'unattributed')===role));
+  },
+  choices(state,taskId) {
+    const ids=this.scope(state,taskId),agents=new Map(),roles=new Set();
+    for(const episode of state.assignment_episodes||[])if(ids.has(episode.task_id)){const agent=(state.agents||[]).find(a=>a.id===episode.agent_id);if(agent)agents.set(agent.id,agent);roles.add(episode.work_type);}
+    for(const id of ids)for(const row of PanelWorkspace.timeline(state,id)){const a=row.attribution;if(a?.agent_id){agents.set(a.agent_id,{id:a.agent_id,name:a.actor_name,name_en:a.actor_name_en,portrait:a.portrait,panel_short_id:(state.agents||[]).find(p=>p.id===a.agent_id)?.panel_short_id||a.color_key});roles.add(a.work_type);}}
+    return {agents:[...agents.values()].sort((a,b)=>a.id.localeCompare(b.id)),roles:[...roles].filter(Boolean).sort(),tasks:(state.tasks||[]).filter(t=>ids.has(t.id))};
+  }
+};
+
+
+// Keyed local DOM reconciliation. No HTML parsing, synthetic identity or polling side effects.
+globalThis.PanelPatch = {
+  listen(node,type,callback,options) {
+    const capture=typeof options==='boolean'?options:Boolean(options?.capture),key=type+':'+capture;
+    if(!node.__panelActions)node.__panelActions=new Map();
+    const existing=node.__panelActions.get(key);
+    if(existing){existing.callback=callback;return;}
+    const record={type,callback,options,wrapped:event=>{const current=node.__panelActions?.get(key);if(current)current.callback.call(node,event,node);}};
+    node.__panelActions.set(key,record);node.addEventListener(type,record.wrapped,options);
+  },
+  actions(target,next) {
+    if(next.__panelPreserveActions)return;
+    const wanted=next.__panelActions||new Map();
+    for(const [key,record] of target.__panelActions||[])if(!wanted.has(key)){
+      target.removeEventListener(record.type,record.wrapped,record.options);target.__panelActions.delete(key);
+    }
+    for(const record of wanted.values())this.listen(target,record.type,record.callback,record.options);
+  },
+  key(node) {return node?.dataset?.timelineKey||node?.dataset?.patchKey||node?.id||node?.dataset?.focusKey||node?.dataset?.disclosureKey||null;},
+  sync(target,next) {
+    if(target.nodeType===3&&next.nodeType===3){if(target.nodeValue!==next.nodeValue)target.nodeValue=next.nodeValue;return target;}
+    if(target.nodeType!==next.nodeType||target.nodeName!==next.nodeName){target.replaceWith(next);return next;}
+    this.actions(target,next);
+    const focused=target.ownerDocument?.activeElement===target;
+    for(const attr of [...(next.attributes||[])])if(attr.name!=='open'&&target.getAttribute(attr.name)!==attr.value)target.setAttribute(attr.name,attr.value);
+    for(const attr of [...(target.attributes||[])])if(attr.name!=='open'&&!next.hasAttribute(attr.name))target.removeAttribute(attr.name);
+    if(!focused&&['INPUT','SELECT','TEXTAREA','PROGRESS'].includes(target.nodeName)&&target.value!==next.value)target.value=next.value;
+    if('disabled' in next&&target.disabled!==next.disabled)target.disabled=next.disabled;
+    if('hidden' in next&&target.hidden!==next.hidden)target.hidden=next.hidden;
+    if(!next.childNodes.length&&target.textContent!==next.textContent)target.textContent=next.textContent;
+    this.children(target,[...next.childNodes]);return target;
+  },
+  children(parent,incoming) {
+    const old=[...parent.childNodes],keyed=new Map(old.map(n=>[this.key(n),n]).filter(([k])=>k)),used=new Set();
+    let cursor=parent.firstChild;
+    for(const fresh of incoming){
+      const key=this.key(fresh);let current=key?keyed.get(key):old.find(n=>!used.has(n)&&!this.key(n)&&n.nodeType===fresh.nodeType&&n.nodeName===fresh.nodeName);
+      if(current){used.add(current);current=this.sync(current,fresh);}else current=fresh;
+      if(current!==cursor)parent.insertBefore(current,cursor||null);
+      cursor=current.nextSibling;
+    }
+    for(const node of old)if(!used.has(node)&&node.parentNode===parent)node.remove();
   }
 };

@@ -11,7 +11,7 @@ TABLE_SQL = '''CREATE TABLE IF NOT EXISTS progress_updates (
  source_event_id TEXT, UNIQUE(run_id,source_event_id));'''
 
 
-def record_progress(store, run_id, current_step, result, next_step, evidence, completed=None, total=None, unit='', source_event_id=None):
+def record_progress(store, run_id, current_step, result, next_step, evidence, completed=None, total=None, unit='', source_event_id=None, assignment_id=None):
     from .app import text, OPEN_STATUSES
     current_step, evidence = text(current_step, 1000), text(evidence, 2000)
     result = text(result, 2000) if result else ''
@@ -25,6 +25,8 @@ def record_progress(store, run_id, current_step, result, next_step, evidence, co
     if source_event_id is not None:
         source_event_id = text(source_event_id, 200)
     content = {'run_id':run_id,'current_step':current_step,'result':result,'next_step':next_step,'completed':completed,'total':total,'unit':unit,'evidence':evidence}
+    if assignment_id is not None:
+        content['assignment_id'] = assignment_id
     fingerprint = hashlib.sha256(json.dumps(content,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
     now = time.time()
     with store.connect() as db:
@@ -33,6 +35,7 @@ def record_progress(store, run_id, current_step, result, next_step, evidence, co
         run = db.execute('SELECT * FROM runs WHERE id=?',(run_id,)).fetchone()
         if not run or run['status'] not in OPEN_STATUSES:
             raise ValueError('Progress requires an existing unfinished run')
+        from .collaborative_activity import assignment_context, attribute
         previous = db.execute('SELECT * FROM progress_updates WHERE run_id=? ORDER BY created DESC,id DESC LIMIT 1',(run_id,)).fetchone()
         duplicate = db.execute('SELECT * FROM progress_updates WHERE run_id=? AND source_event_id=?',(run_id,source_event_id)).fetchone() if source_event_id else None
         if duplicate:
@@ -44,10 +47,12 @@ def record_progress(store, run_id, current_step, result, next_step, evidence, co
         # Identical content anywhere in this run is not a new milestone.
         if db.execute('SELECT id FROM progress_updates WHERE id=?',(fingerprint,)).fetchone():
             return {'id':fingerprint,'run_id':run_id,'deduplicated':True}
+        context = assignment_context(db,assignment_id,run_id=run_id) if assignment_id else None
         db.execute('INSERT INTO progress_updates VALUES(?,?,?,?,?,?,?,?,?,?,?)',(fingerprint,run_id,now,current_step,result,next_step,completed,total,unit,evidence,source_event_id))
         message = current_step + (('\n'+result) if result else '') + ((f'\n{completed:g}/{total:g} {unit}') if completed is not None else '') + (('\n下一步 / Next: '+next_step) if next_step else '')
         task = db.execute('SELECT project FROM tasks WHERE id=?',(run['task_id'],)).fetchone()
-        db.execute('INSERT INTO activity(created,project,role,stage,message,task_id,state,source_event_id) VALUES(?,?,?,?,?,?,?,?)',(now,task['project'],'assistant','progress',message,run['task_id'],'in_progress','progress-update:'+fingerprint))
+        cursor = db.execute('INSERT INTO activity(created,project,role,stage,message,task_id,state,source_event_id) VALUES(?,?,?,?,?,?,?,?)',(now,task['project'],'assistant','progress',message,run['task_id'],'in_progress','progress-update:'+fingerprint))
+        attribute(db,'activity',cursor.lastrowid,context)
     return {'id':fingerprint,'run_id':run_id,'deduplicated':False,'created':now}
 
 
@@ -72,7 +77,7 @@ def observed_run_ids(snapshot, now=None):
 def current_run(snapshot, task_id, now=None):
     """Fresh assigned execution first, then newest unfinished, then newest terminal."""
     now = time.time() if now is None else now
-    runs = {r.get('id', str(i)):r for i,r in enumerate([*snapshot.get('runs',[]), *snapshot.get('latest_runs',[]), *snapshot.get('open_runs',[])]) if r['task_id']==task_id}
+    runs = {r.get('id', str(i)):r for i,r in enumerate([*snapshot.get('runs',[]), *snapshot.get('latest_runs',[]), *snapshot.get('current_runs',[]), *snapshot.get('open_runs',[])]) if r['task_id']==task_id}
     open_states = {'pending','running','waiting_user','waiting_external','paused','awaiting_review'}
     active_ids = observed_run_ids(snapshot, now)
     def order(run):

@@ -31,6 +31,7 @@ def schedule_fixture():
 class ScheduleResultPresentationTests(TestCase):
     def viewer(self, record, language="en", expanded=False):
         view = Dashboard.__new__(Dashboard)
+        view.tk=Mock();view.panel=view.bg='white';view.live_updates=[]
         view.language = language
         view.snapshot = {"schedules": [record]}
         view.muted, view.accent = "gray", "green"
@@ -103,16 +104,19 @@ class ScheduleResultPresentationTests(TestCase):
             view = self.viewer(record, language)
             view.render_schedules()
             self.assertIn(linked, view.compact_row.call_args.args[3])
-            self.assertIn(stale, view.compact_row.call_args.args[2])
-            self.assertIn("2000-01-02", view.compact_row.call_args.args[2])
+            self.assertNotIn(stale, view.compact_row.call_args.args[2])
+            self.assertIn("2000-01-03", view.compact_row.call_args.args[2])
+            self.assertEqual(len(view.compact_row.call_args.args[2].splitlines()),2)
+            self.assertTrue(view.compact_row.call_args.kwargs['bounded'])
             labels = [str(call.args[1]) for call in view.label.call_args_list]
-            self.assertTrue(any(retention in label for label in labels))
+            self.assertFalse(any(retention in label for label in labels))
             self.assertTrue(any("GitHub" in label for label in labels))
             self.assertFalse(any(check+":" in label for label in labels))
             view.toggle_registry_detail("schedules", record["id"])
             view.render_schedules()
             labels = [str(call.args[1]) for call in view.label.call_args_list]
             self.assertTrue(any(check+":" in label for label in labels))
+            self.assertTrue(any(retention in label for label in labels))
             source_url = record["external_result"]["observation"]["evidence"]["status_url"]
             self.assertFalse(any(source_url in label for label in labels))
             view.toggle_registry_detail("schedule_technical", record["id"])

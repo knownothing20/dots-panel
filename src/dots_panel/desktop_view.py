@@ -9,12 +9,14 @@ import base64
 from .doctor import doctor_rows
 from .notifications import NotificationState
 from .native_notifications import NativeNotifications
+from .native_window import NativeWindow
 from .progress import task_progress, current_run, task_meaningful_updated, agent_observation
 from .agent_identity import draw_portrait, identity_label, source_label
 from .participants import activity_participants, profile_reference
 from .app import artifact_delivery_label, verification_label, attention_items, attention_draft, artifact_kind_label, VERSION, verified_repository_url, verified_link, skill_origin_label, skill_publication_label
 from contextlib import contextmanager
 import json
+import hashlib
 import os
 from pathlib import Path
 import sqlite3
@@ -24,6 +26,11 @@ import sys
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+try:
+    LOADED_SOURCE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+except OSError:
+    LOADED_SOURCE_SHA256 = 'unavailable'
 
 DEFAULT_TIMEZONE = "Asia/Shanghai"
 COMMON_TIMEZONES = ("Asia/Shanghai", "UTC", "America/Los_Angeles", "America/New_York", "Europe/London", "Europe/Paris", "Asia/Tokyo", "Asia/Singapore", "Australia/Sydney")
@@ -45,8 +52,8 @@ from .app import (Metrics, Store, ROOT, default_data_dir, agent_text, agent_work
 
 STATUS = {"waiting_user": "等待用户", "waiting_external": "等待外部结果", "paused": "已暂停记录", "awaiting_review": "等待验收", "running": "进行中", "succeeded": "已完成", "failed": "失败", "cancelled": "已取消", "pending": "待开始"}
 STATES = {"unknown": "历史状态未保留","planned": "计划", "in_progress": "进行中", "verified": "已验证"}
-PAGE_NAMES = {"overview": "概览", "conversations": "活动", "schedules": "定时任务", "software": "软件", "rules": "规则", "about": "关于与版本", "settings": "设置"}
-EN = {"设置": "Settings", "语言": "Language", "显示时区": "Display timezone", "应用时区": "Apply timezone", "默认北京时间；支持 IANA 时区。仅调整显示，不改变系统时间或任务调度。": "Beijing time by default; supports IANA timezones. Display only; system time and task schedules stay unchanged.", "设置保存在本机": "Settings are saved locally", "无效或不支持的 IANA 时区": "Invalid or unsupported IANA timezone", "未保存偏好；当前仅本次有效": "Preferences not saved; applied for this session only","已登记活动与工作记录；执行会话绑定情况见详情": "Registered activities and work records; see details for execution-session bindings","关于与版本": "About & version", "↻ 刷新": "↻ Refresh", "每 5 秒 · 最近刷新": "Every 5s · Last refreshed", "尚未刷新": "Not refreshed yet","历史状态未保留": "Historical state unavailable", "recovered_summary": "Recovered summary","等待用户": "Waiting for user", "等待外部结果": "Waiting for external result", "已暂停记录": "Recorded as paused", "等待验收": "Awaiting review",
+PAGE_NAMES = {"overview": "概览", "conversations": "任务", "schedules": "自动化", "software": "软件", "rules": "规则", "about": "关于与版本", "settings": "设置"}
+EN = {"设置": "Settings", "语言": "Language", "显示时区": "Display timezone", "应用时区": "Apply timezone", "默认北京时间；支持 IANA 时区。仅调整显示，不改变系统时间或任务调度。": "Beijing time by default; supports IANA timezones. Display only; system time and automation timing stay unchanged.", "设置保存在本机": "Settings are saved locally", "无效或不支持的 IANA 时区": "Invalid or unsupported IANA timezone", "未保存偏好；当前仅本次有效": "Preferences not saved; applied for this session only","已登记任务与工作记录；执行会话绑定情况见详情": "Registered tasks and work records; see details for execution-session bindings","关于与版本": "About & version", "↻ 刷新": "↻ Refresh", "每 5 秒 · 最近刷新": "Every 5s · Last refreshed", "尚未刷新": "Not refreshed yet","历史状态未保留": "Historical state unavailable", "recovered_summary": "Recovered summary","等待用户": "Waiting for user", "等待外部结果": "Waiting for external result", "已暂停记录": "Recorded as paused", "等待验收": "Awaiting review",
 
     "进行中 / 已完成 · {count} 个任务": "Running / done · {count} tasks",
     "容器配额 {quota}": "Container quota: {quota}",
@@ -74,24 +81,24 @@ EN = {"设置": "Settings", "语言": "Language", "显示时区": "Display timez
     "尚无显式记录的工作摘要。请通过本地 CLI 登记任务、运行事件和阶段进度；此视图不会读取会话或自动发现任务。": "No explicitly recorded summaries yet. Register tasks, events and stage progress using the local CLI. This view does not read sessions or discover tasks automatically.",
     "说明": "Description", "最后更新": "Last update", "最后更新：": "Last update: ",
     "进度更新较久，执行状态待确认": "Progress update is old; execution unconfirmed", "更新较久，待确认": "Old update; unconfirmed",
-    "概览": "Overview", "活动": "Activities", "定时任务": "Schedules", "软件": "Software",
+    "概览": "Overview", "任务": "Tasks", "自动化": "Automations", "软件": "Software",
     "你的本地工作空间": "Your local workspace", "资源、工作与计划，一目了然": "Resources, work and plans at a glance",
-    "已登记活动与工作记录；尚未绑定独立执行会话": "Registered activities and work records; no separate execution session is linked",
-    "只展示已登记计划；此面板不会执行定时任务": "Registered plans only; this panel does not execute schedules",
+    "已登记任务与工作记录；尚未绑定独立执行会话": "Registered tasks and work records; no separate execution session is linked",
+    "只展示已登记计划；此面板不会执行自动化": "Registered plans only; this panel does not execute automations",
     "本地软件登记与检测；不会运行任意命令": "Local software registry and checks; no arbitrary commands",
-    "本地优先": "Local first", "工作中": "Active work", "查看活动 →": "View activities →",
-    "查看计划 →": "View schedules →", "没有进行中的已登记任务": "No registered task is currently running",
-    "尚未登记任务": "No tasks registered yet", "尚未登记定时任务": "No schedules registered yet",
+    "本地优先": "Local first", "工作中": "Active work", "查看任务 →": "View tasks →",
+    "查看计划 →": "View automations →", "没有进行中的已登记任务": "No registered task is currently running",
+    "尚未登记任务": "No tasks registered yet", "尚未登记自动化": "No automations registered yet",
     "尚未登记其他软件": "No other software registered yet", "未接入": "Disconnected", "已暂停": "Paused",
     "下次运行未知": "Next run unknown", "计划时间": "Planned time", "来源": "Source", "计划数量": "Registered plans",
     "未接入调度器": "No scheduler connected", "此页仅显示元数据，不代表任务已安排或会运行": "Metadata only; a listed plan is not confirmation of scheduling or execution",
-    "全部活动": "All activities", "打开所选活动": "Open selected activity",
+    "全部任务": "All tasks", "打开所选任务": "Open selected task",
     "双击任务或按 Enter 打开记录；Esc 返回列表": "Double-click a task or press Enter to open; Esc returns to the list",
     "← 返回列表": "← Back to list", "工作时间线": "Work timeline", "暂无工作记录": "No work records yet",
-    "活动进展记录；尚未绑定独立执行会话": "Activity progress records; no separate execution session is linked",
+    "任务进展记录；尚未绑定独立执行会话": "Task progress records; no separate execution session is linked",
     "此窗口正在运行": "This viewer is running", "本地任务与资源看板": "Local task and resource dashboard",
     "关闭此窗口": "Close this viewer", "确认关闭此窗口？": "Close this viewer?",
-    "只关闭当前看板窗口，不会停止任务、定时任务或其他服务。可从桌面启动器重新打开。": "Only this viewer will close. Tasks, schedules and other services will keep their current state. Reopen it from the desktop launcher.",
+    "只关闭当前看板窗口，不会停止任务、自动化或其他服务。可从桌面启动器重新打开。": "Only this viewer will close. Tasks, automations and other services will keep their current state. Reopen it from the desktop launcher.",
     "可用": "Available", "未检测到": "Not detected", "未验证": "Not verified", "最近检测": "Last checked", "版本": "Version",
     "此处未提供进程控制": "Process controls are not available here", "数据来自显式登记；不读取内部会话": "Explicitly registered data only; internal sessions are not read",
     "可见指标可能来自宿主机；配额以容器值为准": "Visible metrics may reflect the host; use container quota values",
@@ -100,10 +107,47 @@ EN = {"设置": "Settings", "语言": "Language", "显示时区": "Display timez
     "每 5 秒刷新": "Refreshes every 5s", "最近 100 条工作记录": "Up to 100 recent work records", "本机时间": "Local time", "未保存语言偏好": "Language preference was not saved",
     "心跳跟踪": "Heartbeat tracking", "手动记录": "Manual record", "已登记的软件": "Registered software", "资源使用情况": "Resource usage",
     "可见指标；内存优先使用容器配额": "Visible metrics; memory uses quota when available", "工作区": "Workspace", "全部": "All", "待开始": "Pending", "心跳过期": "Heartbeat stale",
-    "该状态暂无任务": "No tasks with this status", "另有 {count} 个活动，可在活动页查看": "{count} more activities in Activities",
+    "该状态暂无任务": "No tasks with this status", "另有 {count} 个任务，可在任务页查看": "{count} more tasks in Tasks",
 }
 
-EN.update({"等待用户": "Waiting for user", "等待外部": "Waiting externally", "待验收": "Awaiting review", "规则": "Rules", "关于": "About"})
+EN.update({"任务":"Tasks","自动化":"Automations","等待用户": "Waiting for user", "等待外部": "Waiting externally", "待验收": "Awaiting review", "规则": "Rules", "关于": "About"})
+
+
+def bounded_card_lines(text, width, measure, limit=2):
+    """Pixel-bounded, deterministic excerpts; full content stays in task detail."""
+    remaining = ' '.join(str(text or '').split())
+    lines = []
+    width = max(1, width)
+    for index in range(limit):
+        if not remaining:
+            break
+        if measure(remaining) <= width:
+            lines.append(remaining)
+            break
+        suffix = '…' if index == limit-1 else ''
+        low, high = 0, len(remaining)
+        while low < high:
+            middle = (low+high+1)//2
+            if measure(remaining[:middle]+suffix) <= width:
+                low = middle
+            else:
+                high = middle-1
+        cut = max(1, low)
+        if not suffix:
+            word = remaining.rfind(' ', 0, cut+1)
+            if word >= cut//2:
+                cut = word
+        lines.append(remaining[:cut].rstrip()+suffix)
+        remaining = remaining[cut:].lstrip()
+    return '\n'.join(lines)
+
+
+def compact_task_excerpt(text):
+    """Keep technical evidence out of overview/list excerpts, not out of storage."""
+    import re
+    text = re.split(r'(?i)\s*(?:\|\s*)?(?:Evidence|Next|验证依据|状态依据|下一步)\s*[:：]', str(text or ''), maxsplit=1)[0]
+    text = re.sub(r'\b(?:libfile_[a-zA-Z0-9_]+|[0-9a-f]{16,64})\b', '', text)
+    return ' '.join(text.split())
 
 
 def image_preview_geometry(width, height, screen_width, screen_height):
@@ -332,7 +376,8 @@ def task_rows(snapshot, now, language="zh"):
         updated = duration(now - run.get("progress_updated", run["updated"]), language) + (" ago" if language == "en" else "前") if run else "—"
         rows.append({"id": task["id"], "run": run, "status": status, "warning": warning,
                      "values": (task["name"], task["project"], label, stage_label(activity["stage"], language) if activity else "—", elapsed, updated)})
-    return sorted(rows, key=lambda row: (row["status"] in {"succeeded", "cancelled"}, -task_meaningful_updated(snapshot, row["id"]), row["id"]))
+    priority = lambda status: 0 if status == "running" else 2 if status in {"succeeded", "cancelled", "failed"} else 1
+    return sorted(rows, key=lambda row: (priority(row["status"]), -task_meaningful_updated(snapshot, row["id"]), row["id"]))
 
 
 def pipeline_counts(snapshot):
@@ -448,21 +493,112 @@ def schedule_result_view(schedule, language="zh", timezone=DEFAULT_TIMEZONE):
 
 def timeline_records(snapshot, task_id):
     """One newest-first stream, including every run's original start note."""
-    runs = {row["id"]: row for row in snapshot.get("runs", []) if row["task_id"] == task_id}
+    runs = {row["id"]: row for field in ("runs", "latest_runs", "current_runs", "open_runs") for row in snapshot.get(field, []) if row["task_id"] == task_id}
     records = []
     for item in snapshot.get("activity", []):
         if item.get("task_id") == task_id:
-            records.append({"created": item["created"], "title": item["stage"], "state": item.get("state"), "message": item["message"], "kind": "activity", "source_id": str(item.get("id", ""))})
-    mirrored = {(row["created"], row["message"]) for row in records}
+            records.append({"created": item["created"], "title": item["stage"], "state": item.get("state"), "message": item["message"], "kind": "activity", "source_id": str(item.get("id", "")), "key": "activity:"+str(item.get("id", "")), "task_id": task_id, "attribution": item.get("attribution"), "run_id": item.get("run_id")} )
+    mirrored = {(row["created"], row["message"]) for row in records if not row.get("attribution")}
     for item in snapshot.get("events", []):
-        if item["run_id"] in runs and (item["created"], item["message"]) not in mirrored:
-            records.append({"created": item["created"], "title": "运行事件", "state": None, "message": item["message"], "kind": "event", "source_id": str(item.get("id", ""))})
+        if item["run_id"] in runs and (item.get("attribution") or (item["created"], item["message"]) not in mirrored):
+            records.append({"created": item["created"], "title": "运行事件", "state": None, "message": item["message"], "kind": "event", "source_id": str(item.get("id", "")), "key": "event:"+str(item.get("id", "")), "task_id": task_id, "attribution": item.get("attribution"), "run_id": item.get("run_id")})
     for item in runs.values():
         if item.get("note"):
-            records.append({"created": item["started"], "title": "启动说明：", "state": None, "message": item["note"], "kind": "note", "source_id": str(item["id"])})
+            records.append({"created": item["started"], "title": "启动说明：", "state": None, "message": item["note"], "kind": "note", "source_id": str(item["id"]), "key": "note:"+str(item["id"]), "task_id": task_id, "attribution": None, "run_id": item["id"]})
     order = {"activity": 0, "event": 1, "note": 2}
     return sorted(records, key=lambda row: (-row["created"], order[row["kind"]], row["source_id"], row["message"]))
 
+
+
+COLLABORATION_COLORS = ('#eef5ef','#edf3fa','#f8f0e8','#f1eef8','#f8edf1','#eef5f5')
+
+
+def collaboration_scope(snapshot, task_id, include_children=True):
+    task = next((t for t in snapshot.get('tasks', []) if t['id'] == task_id), {})
+    ids = {task_id}
+    if include_children and task.get('activity_kind') == 'project':
+        ids.update(t['id'] for t in snapshot.get('tasks', []) if t.get('parent_task_id') == task_id)
+    return ids
+
+
+def collaboration_participants(snapshot, task_id):
+    merged = {}
+    for key in sorted(collaboration_scope(snapshot, task_id)):
+        for row in activity_participants(snapshot, key):
+            if row['agent']['id'] not in merged:
+                merged[row['agent']['id']] = {**row, 'assignments': list(row['assignments'])}
+            else:
+                merged[row['agent']['id']]['assignments'].extend(row['assignments'])
+    return list(merged.values())
+
+
+def collaboration_mode(task, language='zh'):
+    en = language == 'en'
+    parts = [('Project' if en else '项目') if task.get('activity_kind') == 'project' else ('Task' if en else '任务'),
+             ('Team' if en else '团队') if task.get('collaboration_mode') == 'team' else ('Single' if en else '单人')]
+    if task.get('mode_source') != 'explicit':
+        parts[1]='Mode not recorded' if en else '协作方式未登记' 
+    return ' · '.join(parts)
+
+
+def collaboration_actor(record, snapshot, language='zh'):
+    attribution = record.get('attribution') or {}
+    if not attribution.get('agent_id'):
+        return {'known': False, 'label': 'Anonymous' if language == 'en' else '匿名',
+                'role': '', 'color': '#f3f4ef', 'agent': None, 'id': 'unattributed'}
+    key = attribution.get('color_key', '')
+    if len(key) != 8 or any(c not in '0123456789abcdefABCDEF' for c in key):
+        key = '00000000'
+    agent = {'id': attribution['agent_id'], 'name': attribution.get('actor_name', ''), 'name_en': attribution.get('actor_name_en', ''),
+             'portrait': attribution.get('portrait', ''), 'panel_short_id': attribution.get('actor_short_id') or ('ID unrecorded' if language == 'en' else '编号未记录')}
+    return {'known': True, 'label': agent_text(agent, 'name', language) or agent['panel_short_id'], 'short_id': agent['panel_short_id'],
+            'role': work_type_label(attribution.get('work_type', 'unspecified'), language), 'color': COLLABORATION_COLORS[int(key, 16) % len(COLLABORATION_COLORS)],
+            'agent': agent, 'id': agent['id'], 'assignment_id': attribution.get('assignment_id')}
+
+
+def collaboration_records(snapshot, task_id, filters=None):
+    filters = filters or {}
+    ids = collaboration_scope(snapshot, task_id, filters.get('include_children', True))
+    records = [r for key in sorted(ids) for r in timeline_records(snapshot, key)]
+    return sorted([r for r in records if (not filters.get('task') or r.get('task_id') == filters['task'])
+                   and (not filters.get('agent') or (r.get('attribution') or {}).get('agent_id', 'unattributed') == filters['agent'])
+                   and (not filters.get('role') or (r.get('attribution') or {}).get('work_type', 'unattributed') == filters['role'])],
+                  key=lambda r: (-r['created'], r['kind'], r['source_id']))
+
+
+class RetainedCanvas:
+    """Patch a deterministic drawing without deleting unchanged items or windows."""
+    def __init__(self, canvas):
+        self.canvas=canvas
+        self.items=getattr(canvas,'retained_items',None)
+        if not isinstance(self.items,dict):self.items={}
+        canvas.retained_items=self.items
+        self.used=set();self.index=0
+    def __enter__(self):return self
+    def __exit__(self,*args):
+        for key in list(self.items):
+            if key not in self.used:
+                self.canvas.delete(self.items.pop(key)['id'])
+    def delete(self,*tags):
+        if tags==('all',):return
+        self.canvas.delete(*tags)
+    def __getattr__(self,name):
+        if not name.startswith('create_'):return getattr(self.canvas,name)
+        def create(*coords,**options):
+            key=('window',str(options.get('window'))) if name=='create_window' else ('item',self.index)
+            self.index+=1;self.used.add(key);previous=self.items.get(key)
+            if previous is None or previous['method']!=name:
+                if previous:self.canvas.delete(previous['id'])
+                item=getattr(self.canvas,name)(*coords,**options)
+                self.items[key]={'id':item,'method':name,'coords':coords,'options':dict(options)}
+            else:
+                item=previous['id']
+                if previous['coords']!=coords:self.canvas.coords(item,*coords);previous['coords']=coords
+                changed={key:value for key,value in options.items() if previous['options'].get(key)!=value}
+                if changed:self.canvas.itemconfigure(item,**changed)
+                previous['options']=dict(options)
+            return item
+        return create
 
 def scroll_extent(content_height, viewport_height, fraction=0):
     """Keep short pages top-aligned; never allow a negative Canvas origin."""
@@ -562,16 +698,8 @@ class Dashboard:
         self.accent, self.tint = "#258560", "#e3f1e8"
         import tkinter.font as font
         self.font = choose_font(font.families(root))
-        root.geometry("1260x850")
-        root.minsize(760, 620)
         root.configure(bg=self.bg)
-        try:
-            root.attributes("-zoomed", True)
-        except tk.TclError:
-            try:
-                root.state("zoomed")
-            except tk.TclError:
-                pass
+        self.window_state = NativeWindow(root, tk.TclError)
         style = ttk.Style(root)
         style.theme_use("clam")
         style.configure("Treeview", background=self.panel, foreground=self.fg, fieldbackground=self.panel, rowheight=45, borderwidth=0, font=(self.font, -17))
@@ -613,15 +741,15 @@ class Dashboard:
         button.bind("<Destroy>", lambda event: self.motion.cancel(button), add="+")
         return button
 
-    def card(self, parent, height=130):
+    def card(self, parent, height=130, fill=None):
         canvas = self.tk.Canvas(parent, height=height, bg=self.bg, highlightthickness=0, bd=0)
-        inner = self.tk.Frame(canvas, bg=self.panel)
+        inner = self.tk.Frame(canvas, bg=fill or self.panel)
         window = canvas.create_window(20, 17, window=inner, anchor="nw")
         def redraw(event):
             for shape in canvas.find_all():
                 if shape != window:
                     canvas.delete(shape)
-            self.surface_layers(canvas, event.width, event.height)
+            self.surface_layers(canvas, event.width, event.height, fill=fill)
             canvas.tag_raise(window)
             canvas.itemconfigure(window, width=max(20, event.width-40), height=0 if getattr(canvas, "auto_fit", False) else max(20, event.height-39))
         canvas.bind("<Configure>", redraw)
@@ -649,6 +777,22 @@ class Dashboard:
             button.pack(fill="x", padx=12, pady=4)
             self.nav_buttons[page] = button
         self.label(sidebar, "v" + VERSION + "  ·  Ctrl 1–7", 13, self.muted).pack(side="bottom", anchor="w", padx=22, pady=22)
+        if getattr(self, "window_state", None) is not None:
+            window_hint = self.label(sidebar, "", 11, self.muted, wrap=150, raw=True)
+            window_control = self.button(sidebar, "", self.window_state.toggle)
+            window_control.configure(font=(self.font, -14), pady=6)
+            window_control.pack(side="bottom", fill="x", padx=16, pady=(0, 5))
+            def update_window_control(maximized, unconfirmed):
+                caption = (("Restore window" if maximized else "Maximize window") if self.language == "en"
+                           else ("还原窗口" if maximized else "最大化窗口"))
+                if window_control.cget('text') != caption:
+                    window_control.configure(text=caption)
+                if unconfirmed:
+                    window_hint.configure(text="Window manager did not confirm maximization" if self.language == "en" else "窗口管理器尚未确认最大化")
+                    window_hint.pack(side="bottom", padx=18, pady=(0, 4))
+                else:
+                    window_hint.pack_forget()
+            self.window_state.set_listener(update_window_control)
         main = self.tk.Frame(shell, bg=self.bg)
         main.pack(side="left", fill="both", expand=True, padx=25, pady=22)
         top = self.tk.Frame(main, bg=self.bg)
@@ -659,11 +803,15 @@ class Dashboard:
         self.refresh_button.pack(side="right", padx=(10, 0), pady=5)
         self.health = self.label(top, "正在读取本地数据", 13, self.muted, wrap=430)
         self.health.pack(side="right")
+        self.shell_top = top
         top.bind("<Configure>", lambda event: self.health.configure(wraplength=max(160, event.width-250)))
         self.subtitle = self.label(main, "", 15, self.muted)
         self.subtitle.pack(anchor="w", pady=(5, 13))
         self.recovery_banner = self.label(main, "", 12, "#946a25", raw=True, wrap=900)
-        self.recovery_banner.pack(anchor="w", pady=(0, 4))
+        self.recovery_info_button = self.filter_chip(top, "ⓘ Data note ⌄" if self.language == "en" else "ⓘ 数据说明 ⌄", self.toggle_recovery_info)
+        self.recovery_notice_text = None
+        self.recovery_info_visible = False
+        self.recovery_body_visible = False
         self.content = self.tk.Frame(main, bg=self.bg)
         self.content.pack(fill="both", expand=True)
         self.footer = self.label(main, "数据来自显式登记；不读取内部会话", 13, self.muted)
@@ -702,7 +850,9 @@ class Dashboard:
         region_info = exit_region_label(region, self.language)
         if region:
             region_info += " · ipwho.is · " + self.stamp(region["checked_at"])
-        self.label(timezone_box, region_info, 15, self.muted, raw=True, wrap=660).pack(anchor="w", pady=(10, 0))
+        region_label=self.label(timezone_box,region_info,15,self.muted,raw=True,wrap=660)
+        region_label.pack(anchor='w',pady=(10,0))
+        last_region=[region_info]
         self.fit_card(timezone_card, timezone_box)
 
         motion_card, motion_box = self.card(area, 150)
@@ -719,6 +869,11 @@ class Dashboard:
         for box in (language_box, timezone_box, motion_box):
             box.bind("<Configure>", wrap_settings, add="+")
         self.label(area, "设置保存在本机", 14, self.muted).pack(anchor="w", pady=(0, 12))
+        def refresh_settings():
+            region=self.snapshot.get('exit_region');info=exit_region_label(region,self.language)
+            if region:info+=' · ipwho.is · '+self.stamp(region['checked_at'])
+            if info!=last_region[0]:region_label.configure(text=info);last_region[0]=info
+        self.background_refresh=refresh_settings
 
     def change_motion(self):
         self.motion.reduced = self.motion_preference.get()
@@ -867,21 +1022,53 @@ class Dashboard:
             self.rows = task_rows(self.snapshot, time.time(), self.language)
             self.last_successful_refresh = time.time()
             self.read_error = False
-            if not self.scroll_dragging and not getattr(self, "filter_menu_open", False):
-                if self.page == "overview" or self.view_signature() != self.last_render_signature:
+            conversation_widgets = getattr(self,"conversation_filter_widgets",{})
+            conversation_focus = bool(conversation_widgets) and self.root.focus_get() in conversation_widgets.values()
+            if not self.scroll_dragging and not getattr(self, "filter_menu_open", False) and not conversation_focus:
+                changed = self.view_signature() != self.last_render_signature
+                handler = getattr(self,'background_refresh',None)
+                if changed and callable(handler):
+                    handler()
+                    self.last_render_signature=self.view_signature()
+                elif changed:
                     self.render_page()
-                else:
-                    for update in self.live_updates:
-                        update()
+                for update in list(self.live_updates):
+                    if not (changed and update is handler):update()
             if notification_result is not None and getattr(self, "notifications", None) is not None:
                 self.notifications.observe(notification_result)
         except (OSError, sqlite3.Error, ValueError, KeyError):
             self.read_error = True
-        if getattr(self, "recovery_banner", None) is not None:
-            recovery = self.snapshot.get("recovery") or {}
-            self.recovery_banner.configure(text=recovery.get("notice_en" if self.language == "en" else "notice_zh", ""))
+        self.update_recovery_notice()
         self.update_health()
         self.timer = self.root.after(5000, self.refresh)
+
+    def toggle_recovery_info(self):
+        self.recovery_info_expanded = not getattr(self,'recovery_info_expanded',False)
+        self.update_recovery_notice()
+
+    def update_recovery_notice(self):
+        if getattr(self,'recovery_banner',None) is None:
+            return
+        recovery=self.snapshot.get('recovery') or {}
+        notice=recovery.get('notice_en' if self.language=='en' else 'notice_zh','')
+        if notice != getattr(self,'recovery_notice_text',None):
+            self.recovery_banner.configure(text=notice)
+            self.recovery_notice_text=notice
+        if getattr(self,'recovery_info_button',None) is None:
+            return
+        visible=bool(notice) and not (self.page=='conversations' and bool(self.selected_task))
+        expanded=bool(getattr(self,'recovery_info_expanded',False))
+        caption=('ⓘ Data note' if self.language=='en' else 'ⓘ 数据说明')+(' ⌃' if expanded else ' ⌄')
+        self.patch_caption(self.recovery_info_button,caption)
+        if visible != getattr(self,'recovery_info_visible',False):
+            if visible:self.recovery_info_button.pack(side='right',padx=(0,8),pady=5)
+            else:self.recovery_info_button.pack_forget()
+            self.recovery_info_visible=visible
+        body_visible=visible and expanded
+        if body_visible != getattr(self,'recovery_body_visible',False):
+            if body_visible:self.recovery_banner.pack(anchor='w',fill='x',pady=(0,8),before=self.content)
+            else:self.recovery_banner.pack_forget()
+            self.recovery_body_visible=body_visible
 
     def update_health(self):
         if self.read_error:
@@ -898,6 +1085,15 @@ class Dashboard:
 
     def render_page(self):
         self.motion.cancel_all()
+        self.pending_conversation_anchor = None
+        anchor_key=(self.page,self.selected_task,getattr(self,'detail_tab','timeline'),json.dumps(getattr(self,'conversation_filters',{}),sort_keys=True),getattr(self,'conversation_offset',0))
+        if getattr(self,'conversation_anchor_key',None)==anchor_key and hasattr(self,'page_scroll') and self.page_scroll.winfo_exists():
+            top=self.page_scroll.canvasy(0)
+            if top>0:
+                for key,widget in getattr(self,'conversation_anchors',{}).items():
+                    if widget.winfo_exists() and widget.winfo_y()+widget.winfo_height()>top:
+                        self.pending_conversation_anchor=(key,widget.winfo_y()-top);break
+        self.conversation_anchor_key=anchor_key
         focused = self.root.focus_get()
         output_focus = next((key for key, widget in getattr(self, "output_buttons", {}).items() if widget == focused), None)
         self.output_buttons = {}
@@ -913,11 +1109,21 @@ class Dashboard:
             self.detail_scroll = self.timeline.yview()[0]
         self.cancel_viewport_restore()
         self.live_updates = []
+        self.background_refresh = None
         for widget in self.content.winfo_children():
             widget.destroy()
+        detail_only = self.page == 'conversations' and bool(self.selected_task)
+        if hasattr(self,'shell_top'):
+            if detail_only:
+                self.shell_top.pack_forget();self.subtitle.pack_forget()
+            else:
+                self.shell_top.pack(fill='x',before=self.content)
+                self.subtitle.pack(anchor='w',pady=(5,13),before=self.content)
+            self.update_recovery_notice()
         self.page_title.configure(text=self.t("工作区" if self.page == "overview" else PAGE_NAMES[self.page]))
-        subtitles = {"overview": "资源、工作与计划，一目了然", "conversations": "已登记活动与工作记录；执行会话绑定情况见详情", "schedules": "只展示已登记计划；此面板不会执行定时任务", "software": "本地软件登记与检测；不会运行任意命令"}
+        subtitles = {"overview": "资源、工作与计划，一目了然", "conversations": "已登记任务与工作记录；执行会话绑定情况见详情", "schedules": "只展示已登记计划；此面板不会执行自动化", "software": "本地软件登记与检测；不会运行任意命令"}
         self.subtitle.configure(text=self.t(subtitles.get(self.page, "")))
+        if self.page == 'schedules':self.subtitle.pack_forget()
         for name, button in self.nav_buttons.items():
             button.configure(bg=self.tint if name == self.page else "#eaf2e9", fg=self.accent if name == self.page else self.fg)
         if self.page == "overview":
@@ -968,11 +1174,73 @@ class Dashboard:
         canvas.bind("<Enter>", lambda event: feedback(True))
         canvas.bind("<Leave>", lambda event: feedback(False))
         canvas.bind("<Destroy>", lambda event: self.motion.cancel(canvas), add="+")
-        canvas.create_text(width/2, 17, text=text, fill="white" if selected else self.muted, font=(self.font, -14, "bold" if selected else "normal"))
+        canvas.caption_text=text
+        canvas.caption_item=canvas.create_text(width/2, 17, text=text, fill="white" if selected else self.muted, font=(self.font, -14, "bold" if selected else "normal"))
         canvas.bind("<Button-1>", lambda event: command())
         canvas.bind("<Return>", lambda event: command())
         canvas.bind("<space>", lambda event: command())
         return canvas
+
+    def patch_caption(self,widget,text):
+        if getattr(widget,'caption_text',None)==text:return
+        widget.caption_text=text
+        item=getattr(widget,'caption_item',None)
+        if item is not None:
+            widget.itemconfigure(item,text=text)
+        else:widget.configure(text=text)
+
+    def keyed_labels(self,parent):
+        labels={};previous={}
+        def reconcile(rows):
+            wanted=[key for key,_ in rows]
+            for key in list(labels):
+                if key not in wanted:labels.pop(key).destroy();previous.pop(key,None)
+            for key,text in rows:
+                if key not in labels:
+                    labels[key]=self.label(parent,text,14,self.muted,raw=True,wrap=800);labels[key].pack(anchor='w',fill='x',pady=3)
+                elif previous[key]!=text:labels[key].configure(text=text)
+                previous[key]=text
+        return reconcile
+
+    def keyed_registry(self,parent,records,model,minimum=330,maximum=3,bounded=False):
+        grid=self.card_grid(parent,minimum=minimum,maximum=maximum);cards={};previous={}
+        empty=self.label(parent,'暂无记录' if self.language=='zh' else 'No records',15,self.muted,raw=True)
+        def reconcile():
+            values=records();wanted=[str(row.get('id',row.get('name',''))) for row in values]
+            for key in list(cards):
+                if key not in wanted:cards.pop(key)['box'].surface.destroy();previous.pop(key,None)
+            for row,key in zip(values,wanted):
+                value=model(row)
+                if key not in cards:
+                    box=self.compact_row(grid,value['title'],value.get('summary',''),value.get('status',''),**({'bounded':True} if bounded else {}))
+                    details=self.tk.Frame(box,bg=self.panel);details.pack(fill='x',pady=(4,0))
+                    actions=self.tk.Frame(box,bg=self.panel);actions.pack(fill='x',pady=(5,0))
+                    cards[key]={'box':box,'details':self.keyed_labels(details),'actions':actions,'buttons':{},'callbacks':{}}
+                item=cards[key];old=previous.get(key,{})
+                for field,widget in (('title',item['box'].title_label),('summary',item['box'].summary_label),('status',item['box'].status_label)):
+                    if field in old and old.get(field)!=value.get(field) and widget is not None:
+                        if bounded:item['box'].set_caption(field,value.get(field,''))
+                        else:widget.configure(text=value.get(field,''))
+                item['details'](value.get('details',[]))
+                if bounded:item['box'].set_expanded(bool(value.get('details')))
+                actions=value.get('actions',[]);action_keys=[entry[0] for entry in actions]
+                for action in list(item['buttons']):
+                    if action not in action_keys:item['buttons'].pop(action).destroy();item['callbacks'].pop(action,None)
+                for action,label,callback in actions:
+                    item['callbacks'][action]=callback
+                    if action not in item['buttons']:
+                        button=self.filter_chip(item['actions'],label,lambda item=item,action=action:item['callbacks'][action]());button.pack(side='left',padx=(0,7));item['buttons'][action]=button
+                    else:self.patch_caption(item['buttons'][action],label)
+                previous[key]=value
+            ordered=[cards[key]['box'].surface for key in wanted]
+            if grid.card_items!=ordered:grid.card_items=ordered;grid.reflow_cards()
+            if wanted:empty.pack_forget()
+            else:empty.pack(anchor='w',pady=12)
+        reconcile()
+        self.background_refresh=reconcile
+        if not hasattr(self,"live_updates"):self.live_updates=[]
+        self.live_updates.append(reconcile)
+        return reconcile
 
     def set_workspace_filter(self, status):
         self.workspace_filter = status
@@ -982,7 +1250,7 @@ class Dashboard:
             if button is not None and button.winfo_exists():
                 button.focus_set()
 
-    def open_filter_menu(self):
+    def open_filter_menu(self, kind="status"):
         if getattr(self, "filter_popup", None) is not None:
             try:
                 self.filter_popup.destroy()
@@ -994,9 +1262,13 @@ class Dashboard:
         popup.overrideredirect(True)
         popup.transient(self.root)
         popup.configure(bg=self.bg)
-        width, height = 292, 410
-        x, y = popup_position(self.more_filter_button.winfo_rootx(), self.more_filter_button.winfo_rooty(),
-            self.more_filter_button.winfo_width(), self.more_filter_button.winfo_height(), width, height,
+        type_menu = kind == 'type'
+        anchor_name = 'type_filter_button' if type_menu else 'more_filter_button'
+        anchor = getattr(self,anchor_name)
+        selected = getattr(self,'collaboration_mode_filter','all') if type_menu else self.workspace_filter
+        width, height = (224,190) if type_menu else (292,410)
+        x, y = popup_position(anchor.winfo_rootx(), anchor.winfo_rooty(),
+            anchor.winfo_width(), anchor.winfo_height(), width, height,
             self.root.winfo_screenwidth(), self.root.winfo_screenheight())
         popup.geometry(f"{width}x{height}+{x}+{y}")
         surface = self.tk.Canvas(popup, width=width, height=height, bg=self.bg, bd=0, highlightthickness=0)
@@ -1008,9 +1280,11 @@ class Dashboard:
         panel = self.tk.Frame(surface, bg=self.panel)
         surface.create_window(7, 7, window=panel, anchor="nw", width=width-19, height=height-20)
         options = [(status, self.t(STATUS[status]) + f"  {len(workspace_rows(self.rows, status))}") for status in ("pending", "running", "waiting_user", "waiting_external", "paused", "awaiting_review", "succeeded", "cancelled", "failed")]
-        buttons, position = [], [next((i for i, pair in enumerate(options) if pair[0] == self.workspace_filter), 0)]
+        if type_menu:
+            options=[('all','All types' if self.language=='en' else '全部类型'),('single','Single' if self.language=='en' else '单人'),('team','Team' if self.language=='en' else '团队'),('project','Project' if self.language=='en' else '项目')]
+        buttons, position = [], [next((i for i, pair in enumerate(options) if pair[0] == selected), 0)]
         focus_job = {"id": None}
-        def close(event=None):
+        def close(event=None, apply=False):
             if focus_job["id"] is not None:
                 popup.after_cancel(focus_job["id"])
                 focus_job["id"] = None
@@ -1019,18 +1293,20 @@ class Dashboard:
                 popup.destroy()
             self.filter_popup = None
             self.filter_menu_open = False
-            self.render_page()
-            if self.more_filter_button.winfo_exists():
-                self.more_filter_button.focus_set()
+            if apply:self.render_page()
+            trigger=getattr(self,anchor_name,None)
+            if trigger is not None and trigger.winfo_exists():
+                trigger.focus_set()
             return "break"
         def choose(choice):
-            close()
-            self.set_workspace_filter(choice)
+            if type_menu:self.collaboration_mode_filter=choice
+            else:self.workspace_filter=choice
+            close(apply=True)
             return "break"
         for choice, label in options:
-            button = self.tk.Button(panel, text=("✓  " if choice == self.workspace_filter else "    ")+label,
+            button = self.tk.Button(panel, text=("✓  " if choice == selected else "    ")+label,
                 anchor="w", command=lambda value=choice: choose(value), font=(self.font, -14),
-                bg=self.tint if choice == self.workspace_filter else self.panel, fg=self.accent if choice == self.workspace_filter else self.fg,
+                bg=self.tint if choice == selected else self.panel, fg=self.accent if choice == selected else self.fg,
                 activebackground=self.tint, relief="flat", bd=0, padx=11, pady=8, highlightthickness=1, highlightbackground=self.panel, highlightcolor=self.accent)
             button.pack(fill="x", pady=1)
             buttons.append(button)
@@ -1076,6 +1352,7 @@ class Dashboard:
         return button
 
     def open_task_files(self, task_id):
+        if getattr(self,"selected_task",None) != task_id:self.detail_meta=False
         self.detail_tab = "files"
         self.show_attention_advice = False
         self.page, self.selected_task, self.detail_scroll = "conversations", task_id, 0.0
@@ -1123,6 +1400,7 @@ class Dashboard:
         return box
 
     def open_task(self, task_id, advice=False):
+        if getattr(self,"selected_task",None) != task_id:self.detail_meta=False
         self.show_attention_advice = advice
         self.page, self.selected_task, self.detail_scroll = "conversations", task_id, 0.0
         self.render_page()
@@ -1166,6 +1444,8 @@ class Dashboard:
         def update(first, last):
             state["first"], state["last"] = float(first), float(last)
             draw()
+            if callable(getattr(target,"on_scroll",None)):
+                target.on_scroll(first,last)
         def hover(inside):
             state["hover"] = inside
             draw()
@@ -1217,7 +1497,7 @@ class Dashboard:
         return bar
 
     def detail_paragraph(self, parent, source):
-        text = self.tk.Text(parent, wrap="char", relief="flat", bd=0, bg=self.panel, fg=self.fg, font=(self.font, -16), width=1, height=1, padx=0, pady=0, highlightthickness=0, spacing1=0, spacing2=0, spacing3=0, takefocus=1)
+        text = self.tk.Text(parent, wrap="char", relief="flat", bd=0, bg=parent.cget("bg") if parent is not None else self.panel, fg=self.fg, font=(self.font, -16), width=1, height=1, padx=0, pady=0, highlightthickness=0, spacing1=0, spacing2=0, spacing3=0, takefocus=1)
         text.insert("1.0", source)
         text.configure(state="disabled")
         text.pack(fill="x", anchor="w")
@@ -1262,7 +1542,9 @@ class Dashboard:
     def view_signature(self):
         now = time.time()
         fresh = tuple(sorted((agent['id'],agent.get('status')) for agent in self.snapshot.get('agents',[]) if agent_observation(agent,self.snapshot,now)['recent']))
-        return (self.page, self.selected_task, self.language, self.workspace_filter, self.search_query.get(), fresh, display_signature(self.snapshot))
+        fields={'software':('software',),'schedules':('schedules',),'rules':('rules',),'about':('about',),'settings':('exit_region',)}.get(self.page)
+        visible={key:self.snapshot.get(key) for key in fields} if fields else self.snapshot
+        return (self.page,self.selected_task,self.language,self.workspace_filter,self.search_query.get(),fresh if fields is None else (),display_signature(visible))
 
     def viewport_key(self):
         return (self.page,self.selected_task)
@@ -1280,25 +1562,72 @@ class Dashboard:
         key = self.viewport_key()
         position = self.scroll_positions.get(key, 0)
         restore = {"pending": True, "job": None}
+        def viewport_ready():
+            return canvas.winfo_width() > 1 and canvas.winfo_height() > 1 and canvas.winfo_ismapped()
         def cancel():
+            canvas.follow_tail=False
             restore["pending"] = False
             if restore["job"] is not None:
                 self.root.after_cancel(restore["job"])
                 restore["job"] = None
         canvas.cancel_restore = cancel
+        def sync_extent(fraction=0):
+            # Canvas bounds remain current even when an offscreen frame keeps
+            # an older mapped height. Use one geometry for region and scrolling.
+            bounds = canvas.bbox(item)
+            height, fraction = scroll_extent(bounds[3] if bounds else 1, canvas.winfo_height(), fraction)
+            canvas.configure(scrollregion=(0, 0, max(1, canvas.winfo_width()), height))
+            return height, fraction
+        def follow_end():
+            if self.page_scroll is not canvas or not canvas.winfo_exists():return
+            if not viewport_ready():
+                cancel()
+                return
+            _, fraction = sync_extent(1)
+            canvas.yview_moveto(fraction)
+        canvas.follow_end=follow_end
+        def layout_diagnostic():
+            if self.page_scroll is not canvas or not canvas.winfo_exists():return
+            print('Native layout: '+json.dumps({'viewport':[canvas.winfo_width(),canvas.winfo_height()],
+                'source_sha256':LOADED_SOURCE_SHA256,'layout_revision':'mapped-viewport-top-v1',
+                'canvas_mapped':bool(canvas.winfo_ismapped()),
+                'content_actual':[self.content.winfo_width(),self.content.winfo_height()],
+                'content_children':[[w.winfo_x(),w.winfo_y(),w.winfo_width(),w.winfo_height(),bool(w.winfo_ismapped())] for w in self.content.winfo_children()[:6]],
+                'body_children':[[w.winfo_x(),w.winfo_y(),w.winfo_width(),w.winfo_height(),bool(w.winfo_ismapped())] for w in body.winfo_children()[:6]],
+                'body_requested':body.winfo_reqheight(),'body_actual':body.winfo_height(),
+                'window_bbox':canvas.bbox(item),'scrollregion':str(canvas.cget('scrollregion')),
+                'yview':canvas.yview(),'origin_y':canvas.canvasy(0),
+                'mounted_records':len(getattr(self,'conversation_anchors',{}))}),file=sys.stderr)
+        canvas.layout_diagnostic=layout_diagnostic
         def finish_restore():
             restore["job"] = None
-            if restore["pending"] and canvas.winfo_exists():
+            if restore["pending"] and self.page_scroll is canvas and canvas.winfo_exists():
+                if not viewport_ready():
+                    cancel()
+                    return
                 restore["pending"] = False
-                height, fraction = scroll_extent(body.winfo_reqheight(), canvas.winfo_height(), position)
+                height, fraction = sync_extent(position)
+                anchor=getattr(self,'pending_conversation_anchor',None)
+                if anchor:
+                    widget=getattr(self,'conversation_anchors',{}).get(anchor[0])
+                    if widget is not None and widget.winfo_exists():
+                        _, fraction = scroll_extent(height, canvas.winfo_height(), (widget.winfo_y()-anchor[1])/height)
+                    self.pending_conversation_anchor=None
+                if getattr(canvas,'follow_tail',False):
+                    _, fraction = scroll_extent(height, canvas.winfo_height(), 1)
                 canvas.yview_moveto(fraction)
         def layout(event=None):
             if not canvas.winfo_exists():
                 return
-            height, fraction = scroll_extent(body.winfo_reqheight(), canvas.winfo_height(), canvas.yview()[0])
-            canvas.configure(scrollregion=(0, 0, max(1, canvas.winfo_width()), height))
-            if body.winfo_reqheight() <= canvas.winfo_height():
+            if not viewport_ready():
+                if restore['job'] is not None:cancel()
+                return
+            height, fraction = sync_extent(canvas.yview()[0])
+            if height <= canvas.winfo_height():
                 canvas.yview_moveto(0)
+            elif not restore['pending'] and getattr(canvas,'follow_tail',False):
+                _, fraction = scroll_extent(height, canvas.winfo_height(), 1)
+                canvas.yview_moveto(fraction)
             if restore["pending"]:
                 if restore["job"] is not None:
                     self.root.after_cancel(restore["job"])
@@ -1329,17 +1658,28 @@ class Dashboard:
             button = self.filter_chip(filters, f"{label} {count}", lambda value=status: self.set_workspace_filter(value), self.workspace_filter == status)
             button.pack(side="left", padx=(0, 6))
             self.filter_buttons[status] = button
+        if self.page == 'conversations':
+            mode=getattr(self,'collaboration_mode_filter','all')
+            labels={'all':('全部','All'),'single':('单人','Single'),'team':('团队','Team'),'project':('项目','Project')}
+            caption=('Type · ' if self.language=='en' else '类型 · ')+labels.get(mode,labels['all'])[self.language=='en']+' ⌄'
+            self.type_filter_button=self.filter_chip(filters,caption,lambda:self.open_filter_menu('type'),mode!='all')
+            self.type_filter_button.pack(side='left',padx=(0,6))
+            self.type_filter_button.bind('<Down>',lambda event:self.open_filter_menu('type'))
         exact = self.workspace_filter not in self.filter_buttons
         more = (self.t(STATUS.get(self.workspace_filter, "未知")) + f" {len(workspace_rows(self.rows, self.workspace_filter))}" if exact else ("More filters" if self.language == "en" else "更多筛选")) + " ⌄"
         self.more_filter_button = self.filter_chip(filters, more, self.open_filter_menu, exact)
         self.more_filter_button.pack(side="left")
         self.more_filter_button.bind("<Down>", lambda event: self.open_filter_menu())
+        def refresh_counts():
+            for status,label in (('all',self.t('全部')),('unfinished','Unfinished' if self.language=='en' else '未完成'),('succeeded','Completed' if self.language=='en' else '已完成')):
+                self.patch_caption(self.filter_buttons[status],label+' '+str(len(workspace_rows(self.rows,status))))
+        self.live_updates.append(refresh_counts)
         if self.page != "conversations":
             return
         search = self.tk.Canvas(bar, width=170, height=34, bg=self.bg, bd=0, highlightthickness=0)
         search.grid(row=0, column=1, sticky="e", padx=(10, 0))
         def toolbar_layout(event):
-            narrow = event.width < 620
+            narrow = event.width < max(620, filters.winfo_reqwidth()+190)
             search.grid_configure(row=1 if narrow else 0, column=0 if narrow else 1, sticky="e", pady=(8, 0) if narrow else 0)
         bar.bind("<Configure>", toolbar_layout)
         self.round_shape(search, 0, 0, 170, 34, "#e4eae2", 14)
@@ -1351,143 +1691,165 @@ class Dashboard:
         search.bind("<Button-1>", lambda event: self.search_entry.focus_set())
 
     def airy_task_card(self, parent, row, index):
-        card = self.tk.Canvas(parent, height=240, bg=self.bg, bd=0, highlightthickness=0, cursor="hand2", takefocus=1)
+        # One bounded presentation shared by overview and task list.
+        card = self.tk.Canvas(parent, height=244, bg=self.bg, bd=0, highlightthickness=0, cursor="hand2", takefocus=1)
         if hasattr(parent, "card_items"):
             parent.card_items.append(card)
             parent.reflow_cards()
         else:
             card.grid(row=index//2, column=index%2, sticky="nsew", padx=(0 if index%2 == 0 else 13, 0), pady=(0, 12))
             parent.grid_columnconfigure(index%2, weight=1, uniform="task_cards")
-        colors = {"running": ("#e0f6e8", "#219363"), "succeeded": ("#eeebff", "#8569db"), "pending": ("#fff2d9", "#c48b26"), "cancelled": ("#fbe9e8", "#b86b68"), "failed": ("#fbe5e5", "#c55353")}
-        icon_bg, icon_color = colors.get(row["status"], colors["pending"])
-        latest = next((item for item in sorted(self.snapshot.get("activity", []), key=lambda item: item["created"], reverse=True) if item.get("task_id") == row["id"]), None)
-        outputs = task_output_summary(self.snapshot, row["id"])
-        output_button = self.output_button(card, "View files" if self.language == "en" else "查看文件", lambda key=row["id"]:self.open_task_files(key), row["id"]) if outputs.get("count") else None
+        output_button = self.output_button(card, "View files" if self.language == "en" else "查看文件", lambda key=row["id"]:self.open_task_files(key), row["id"])
+        painted = {'signature': None}
+        def model(value):
+            title,summary,status=self.activity_row_summary(value)
+            return {'title':title,'summary':summary,'status':status,'lifecycle':value['status'],
+                    'count':task_output_summary(self.snapshot,value['id']).get('count',0),
+                    'people':activity_participants(self.snapshot,value['id'])}
         def draw(event):
-            width = event.width
-            card.delete("all")
-            active = row["status"] == "running"
-            self.surface_layers(card, width, 240, "#f3fcf6" if active else self.panel, "#cfe9d7" if active else "#e7ece5")
-            self.round_shape(card, 19, 17, 39, 39, icon_bg, 12)
-            card.create_rectangle(30, 29, 47, 43, outline=icon_color, width=2)
-            card.create_line(30, 33, 47, 33, fill=icon_color, width=2)
-            card.create_line(34, 27, 34, 31, fill=icon_color, width=2)
-            pill_text = row["values"][2]
             import tkinter.font as font
-            pill_width = font.Font(root=self.root, family=self.font, size=-13).measure(pill_text)+26
-            pill_colors = {"running": ("#24845b", "#e5f5eb"), "succeeded": ("#24845b", "#e5f5eb"), "pending": ("#8c712e", "#fff3d9"), "cancelled": ("#946461", "#f6e9e6"), "failed": ("#b4554a", "#fbe8e4")}
-            pill_fg, pill_bg = pill_colors.get(row["status"], pill_colors["pending"])
-            self.pill(card, width-pill_width-20, 22, pill_text, pill_fg, pill_bg)
-            self.draw_participant_group(card,activity_participants(self.snapshot,row['id']),width-pill_width-32,22,lambda key=row['id']:self.open_task(key))
-            card.create_text(20, 76, text=self.cut_text(row["values"][0], width-40, 18, True), anchor="w", fill=self.fg, font=(self.font, -18, "bold"))
-            progress = task_progress(self.snapshot, row["id"])
-            description = progress["current_step"].split("\n",1)[0] if progress["current_step"] else (row.get("run") or {}).get("lifecycle_reason") or activity_summary(self.snapshot, row["id"], self.language)
-            card.create_text(20, 103, text=self.cut_text(description, width-40, 14), anchor="w", fill=self.muted, font=(self.font, -14))
-            progress = task_progress(self.snapshot, row["id"])
-            owner = progress["lead"]["agent"]
-            owner_name = profile_reference(owner,self.language) if owner else ("Unassigned" if self.language == "en" else "未分配")
-            if owner:
-                role=next((a.get("work_type") for a in self.snapshot.get("agent_run_assignments",[]) if a["agent_id"]==owner["id"] and a["run_id"]==progress["current_run_id"]),None)
-                owner_name += " · "+work_type_label(role,self.language)
-            observed = participant_observation(owner, self.snapshot, self.language, timezone=self.timezone)
-            owner_line = participant_caption(progress, self.language) + owner_name + " · " + observed + (" · Run " if self.language == "en" else " · 运行 ") + str(progress["current_run_id"] or "—")
-            detail = owner_line + " | " + (row["warning"] or (self.t("最新阶段") + ": " + row["values"][3]))
-            color = "#8b6b36" if row["warning"] else self.muted
-            card.create_text(20, 127, text=self.cut_text(detail, width-40, 12), anchor="w", fill=color, font=(self.font, -12))
-            card.create_line(20, 142, width-20, 142, fill="#e4eee5" if active else "#edf0ea")
-            mode = "心跳跟踪" if row["run"] and row["run"].get("tracking_mode") == "heartbeat" else "手动记录"
-            counts = progress["counts"]
-            footer = (f"{counts['completed']:g}/{counts['total']:g} {counts['unit']}" if counts else self.t(mode)) + "  ·  " + row["values"][5]
-            card.create_text(20, 156, text=self.cut_text(footer, width-65, 12), anchor="w", fill=self.muted, font=(self.font, -12))
-            card.create_text(width-23, 154, text="›", fill=self.accent, font=(self.font, -23))
-            card.create_line(20,171,width-20,171,fill="#e4eee5")
-            available = max(60,width-(165 if output_button is not None else 40))
-            card.create_text(20,188,text=self.cut_text(output_summary_text(outputs,self.language),available,12),anchor="w",fill=self.accent,font=(self.font,-12,"bold"))
-            card.create_text(20,211,text=self.cut_text(output_main_text(outputs,self.language),available,11),anchor="w",fill=self.muted,font=(self.font,-11))
-            if output_button is not None:
-                card.create_window(width-20,201,window=output_button,anchor="e")
+            data=model(row)
+            with RetainedCanvas(card) as paint:
+                painted['signature'] = display_signature(data)
+                width = event.width
+                paint.delete("all")
+                active = data['lifecycle'] == "running"
+                self.surface_layers(paint, width, 244, "#f3fcf6" if active else self.panel, "#cfe9d7" if active else "#e7ece5")
+                people=data['people'];group_width=28+(min(3,len(people))-1)*24+(32 if len(people)>3 else 0) if people else 0
+                status_font=font.Font(root=self.root,family=self.font,size=-13)
+                pill_text=bounded_card_lines(data['status'],max(20,width-40-group_width-(12 if people else 0)-26),status_font.measure,1)
+                pill_width=status_font.measure(pill_text)+26
+                pill_colors={"running":("#24845b","#e5f5eb"),"succeeded":("#24845b","#e5f5eb"),"failed":("#b4554a","#fbe8e4")}
+                pill_fg,pill_bg=pill_colors.get(data['lifecycle'],("#8c712e","#fff3d9"))
+                self.pill(paint,20+group_width+12 if people else 20,85,pill_text,pill_fg,pill_bg)
+                self.draw_participant_group(paint,people,20+group_width,84,lambda key=row['id']:self.open_task(key))
+                title_font=font.Font(root=self.root,family=self.font,size=-18,weight='bold')
+                body_font=font.Font(root=self.root,family=self.font,size=-14)
+                title=bounded_card_lines(data['title'],max(20,width-40),title_font.measure,2)
+                summary=bounded_card_lines(data['summary'],max(20,width-40),body_font.measure,2)
+                paint.create_text(20,22,text=title,anchor='nw',fill=self.fg,font=(self.font,-18,'bold'))
+                paint.create_text(20,133,text=summary,anchor='nw',fill=self.muted,font=(self.font,-14))
+                paint.create_line(20,183,width-20,183,fill='#e4eee5' if active else '#edf0ea')
+                count=("Files " if self.language=='en' else "成果 ")+str(data['count'])
+                paint.create_text(20,208,text=count,anchor='w',fill=self.accent,font=(self.font,-12,'bold'))
+                if output_button is not None:
+                    paint.create_window(width-20,208,window=output_button,anchor='e')
         card.bind("<Configure>", draw)
         def update_live():
             latest_row = next((item for item in self.rows if item["id"] == row["id"]), None)
-            if latest_row and card.winfo_exists():
+            if latest_row and card.winfo_exists() and display_signature(model(latest_row)) != painted['signature']:
                 row.update(latest_row)
                 from types import SimpleNamespace
                 draw(SimpleNamespace(width=card.winfo_width()))
+        card.update_live=update_live
         self.live_updates.append(update_live)
         card.bind("<Button-1>", lambda event: self.open_task(row["id"]))
         card.bind("<Return>", lambda event: self.open_task(row["id"]))
+        card.bind("<space>", lambda event: self.open_task(row["id"]))
+        card.bind("<FocusIn>",lambda event:card.configure(highlightthickness=2,highlightcolor=self.accent))
+        card.bind("<FocusOut>",lambda event:card.configure(highlightthickness=0))
         return card
 
     def resource_card(self, parent):
         card = self.tk.Canvas(parent, height=181, bg=self.bg, bd=0, highlightthickness=0)
-        metrics = self.metric_values
-        memory = percent(metrics.get("cgroup_memory_current"), metrics.get("memory_quota"))
-        if memory is None and metrics.get("memory_total") and metrics.get("memory_available") is not None:
-            memory = percent(metrics["memory_total"]-metrics["memory_available"], metrics["memory_total"])
-        values = [("CPU", metrics.get("cpu_percent"), "#54bd84"), (self.t("内存"), memory, "#6b9de8"), (self.t("磁盘"), percent(metrics.get("disk_used"), metrics.get("disk_total")), "#e7a64b")]
+        nodes = []
+        painted = {'values': None}
+        def values():
+            metrics = self.metric_values
+            memory = percent(metrics.get('cgroup_memory_current'), metrics.get('memory_quota'))
+            if memory is None and metrics.get('memory_total') and metrics.get('memory_available') is not None:
+                memory = percent(metrics['memory_total']-metrics['memory_available'], metrics['memory_total'])
+            return [("CPU",metrics.get('cpu_percent'),'#54bd84'),(self.t('内存'),memory,'#6b9de8'),(self.t('磁盘'),percent(metrics.get('disk_used'),metrics.get('disk_total')),'#e7a64b')]
+        def arc_options(value):
+            return {'extent':-max(.01,min(99.99,value))*3.6 if value is not None else 0,'state':'normal' if value is not None else 'hidden'}
         def draw(event):
-            width = event.width
-            card.delete("all")
-            self.surface_layers(card, width, 181)
-            card.create_text(19, 26, text=self.t("资源使用情况"), anchor="w", fill=self.fg, font=(self.font, -17, "bold"))
-            for index, (title, value, color) in enumerate(values):
-                center, y, radius = width * (index+.5)/3, 88, 31
-                card.create_oval(center-radius, y-radius, center+radius, y+radius, outline="#edf0ec", width=6)
-                if value is not None:
-                    card.create_arc(center-radius, y-radius, center+radius, y+radius, start=90, extent=-max(.01, min(99.99,value))*3.6, style="arc", outline=color, width=6)
-                card.create_text(center, y, text=f"{value:.0f}%" if value is not None else "—", fill=self.fg, font=(self.font, -18, "bold"))
-                card.create_text(center, 135, text=title, fill=self.muted, font=(self.font, -13))
-            card.create_text(19, 159, text=self.cut_text(self.t("可见指标；内存优先使用容器配额"), width-38, 11), anchor="w", fill=self.muted, font=(self.font, -11))
-        card.bind("<Configure>", draw)
+            width=event.width;current=values();painted['values']=current;nodes.clear()
+            card.delete('all')
+            self.surface_layers(card,width,181)
+            card.create_text(19,26,text=self.t('资源使用情况'),anchor='w',fill=self.fg,font=(self.font,-17,'bold'))
+            for index,(title,value,color) in enumerate(current):
+                center,y,radius=width*(index+.5)/3,88,31
+                card.create_oval(center-radius,y-radius,center+radius,y+radius,outline='#edf0ec',width=6)
+                arc=card.create_arc(center-radius,y-radius,center+radius,y+radius,start=90,style='arc',outline=color,width=6,**arc_options(value))
+                label=card.create_text(center,y,text=f'{value:.0f}%' if value is not None else '—',fill=self.fg,font=(self.font,-18,'bold'))
+                nodes.append((arc,label))
+                card.create_text(center,135,text=title,fill=self.muted,font=(self.font,-13))
+            card.create_text(19,159,text=self.cut_text(self.t('可见指标；内存优先使用容器配额'),width-38,11),anchor='w',fill=self.muted,font=(self.font,-11))
+        def update_live():
+            current=values()
+            if not card.winfo_exists() or not nodes or current==painted['values']:return
+            for index,(_,value,_) in enumerate(current):
+                if painted['values'][index][1]==value:continue
+                arc,label=nodes[index]
+                card.itemconfigure(arc,**arc_options(value))
+                card.itemconfigure(label,text=f'{value:.0f}%' if value is not None else '—')
+            painted['values']=current
+        card.bind('<Configure>',draw)
+        self.live_updates.append(update_live)
         return card
 
     def schedules_summary_card(self, parent):
         card = self.tk.Canvas(parent, height=181, bg=self.bg, bd=0, highlightthickness=0, cursor="hand2", takefocus=1)
         records = self.snapshot.get("schedules", [])
         def draw(event):
-            width = event.width
-            card.delete("all")
-            self.surface_layers(card, width, 181)
-            card.create_text(19, 26, text=self.t("定时任务"), anchor="w", fill=self.fg, font=(self.font, -17, "bold"))
-            card.create_text(width-22, 26, text=self.t("全部"), anchor="e", fill=self.accent, font=(self.font, -13))
-            for index, record in enumerate(records[:2]):
-                y = 68 + index*54
-                card.create_oval(20, y-12, 46, y+14, fill="#e2f7e9", outline="")
-                card.create_oval(27, y-5, 39, y+7, outline=self.accent, width=2)
-                card.create_line(33, y-2, 33, y+2, 36, y+2, fill=self.accent)
-                card.create_text(57, y-3, text=self.cut_text(record["name"], width-95, 15, True), anchor="w", fill=self.fg, font=(self.font, -15, "bold"))
-                state, timing = schedule_summary(record, self.language, self.timezone)
-                card.create_text(57, y+19, text=self.cut_text(state+" · "+timing, width-80, 12), anchor="w", fill=self.muted, font=(self.font, -12))
-            if not records:
-                card.create_text(20, 76, text=self.t("尚未登记定时任务"), anchor="w", fill=self.muted, font=(self.font, -15))
-            boundary = "Recorded observations · not live scheduling" if self.language == "en" else "已记录观察 · 非实时调度状态"
-            card.create_text(20, 157, text=boundary, anchor="w", fill=self.muted, font=(self.font, -11))
+            with RetainedCanvas(card) as paint:
+                width = event.width
+                paint.delete("all")
+                self.surface_layers(paint, width, 181)
+                paint.create_text(19, 26, text=self.t("自动化"), anchor="w", fill=self.fg, font=(self.font, -17, "bold"))
+                paint.create_text(width-22, 26, text=self.t("全部"), anchor="e", fill=self.accent, font=(self.font, -13))
+                for index, record in enumerate(records[:2]):
+                    y = 68 + index*54
+                    paint.create_oval(20, y-12, 46, y+14, fill="#e2f7e9", outline="")
+                    paint.create_oval(27, y-5, 39, y+7, outline=self.accent, width=2)
+                    paint.create_line(33, y-2, 33, y+2, 36, y+2, fill=self.accent)
+                    paint.create_text(57, y-3, text=self.cut_text(record["name"], width-95, 15, True), anchor="w", fill=self.fg, font=(self.font, -15, "bold"))
+                    state, timing = schedule_summary(record, self.language, self.timezone)
+                    paint.create_text(57, y+19, text=self.cut_text(state+" · "+timing, width-80, 12), anchor="w", fill=self.muted, font=(self.font, -12))
+                if not records:
+                    paint.create_text(20, 76, text=self.t("尚未登记自动化"), anchor="w", fill=self.muted, font=(self.font, -15))
+                boundary = "Recorded observations · not live scheduling" if self.language == "en" else "已记录观察 · 非实时调度状态"
+                paint.create_text(20, 157, text=boundary, anchor="w", fill=self.muted, font=(self.font, -11))
         card.bind("<Configure>", draw)
         card.bind("<Button-1>", lambda event: self.navigate("schedules"))
         card.bind("<Return>", lambda event: self.navigate("schedules"))
+        def update_live():
+            nonlocal records
+            updated=self.snapshot.get('schedules',[])
+            if display_signature(updated)==display_signature(records) or not card.winfo_exists():return
+            records=updated
+            from types import SimpleNamespace
+            draw(SimpleNamespace(width=card.winfo_width()))
+        self.live_updates.append(update_live)
         return card
 
     def render_overview(self):
         self.workspace_toolbar()
-        area = self.scroll_area()
-        filtered = workspace_rows(self.rows, self.workspace_filter, self.search_query.get())
-        grid = self.card_grid(area, minimum=370, maximum=2)
-        for index, row in enumerate(filtered[:4]):
-            self.airy_task_card(grid, row, index)
-        if not filtered:
-            card, body = self.card(area, 115)
-            card.pack(fill="x", pady=(0, 12))
-            self.label(body, "该状态暂无任务", 18, self.muted).pack(anchor="w", pady=20)
-        if len(filtered) > 4:
-            more = self.label(area, self.t("另有 {count} 个活动，可在活动页查看", count=len(filtered)-4), 13, self.accent)
-            more.pack(anchor="w", pady=(0, 10))
-            more.bind("<Button-1>", lambda event: self.navigate("conversations"))
-        bottom = self.tk.Frame(area, bg=self.bg)
-        bottom.pack(fill="x", pady=(3, 0))
-        bottom.grid_columnconfigure(0, weight=1, uniform="summary")
-        bottom.grid_columnconfigure(1, weight=1, uniform="summary")
-        self.resource_card(bottom).grid(row=0, column=0, sticky="nsew")
-        self.schedules_summary_card(bottom).grid(row=0, column=1, sticky="nsew", padx=(13, 0))
+        area=self.scroll_area();grid=self.card_grid(area,minimum=370,maximum=2)
+        cards={}
+        empty=self.label(area,'该状态暂无任务',18,self.muted)
+        more=self.label(area,'',13,self.accent);more.bind('<Button-1>',lambda event:self.navigate('conversations'))
+        bottom=self.tk.Frame(area,bg=self.bg);bottom.pack(fill='x',pady=(3,0))
+        bottom.grid_columnconfigure(0,weight=1,uniform='summary');bottom.grid_columnconfigure(1,weight=1,uniform='summary')
+        self.resource_card(bottom).grid(row=0,column=0,sticky='nsew')
+        self.schedules_summary_card(bottom).grid(row=0,column=1,sticky='nsew',padx=(13,0))
+        def reconcile():
+            filtered=workspace_rows(self.rows,self.workspace_filter,self.search_query.get());wanted=[row['id'] for row in filtered[:4]]
+            for key in list(cards):
+                if key not in wanted:
+                    card=cards.pop(key)
+                    if getattr(card,'update_live',None) in self.live_updates:self.live_updates.remove(card.update_live)
+                    card.destroy()
+            for index,row in enumerate(filtered[:4]):
+                if row['id'] not in cards:cards[row['id']]=self.airy_task_card(grid,row,index)
+            ordered=[cards[key] for key in wanted]
+            if grid.card_items!=ordered:grid.card_items=ordered;grid.reflow_cards()
+            if not filtered:empty.pack(anchor='w',pady=20,before=bottom)
+            else:empty.pack_forget()
+            if len(filtered)>4:
+                more.configure(text=self.t('另有 {count} 个任务，可在任务页查看',count=len(filtered)-4));more.pack(anchor='w',pady=(0,10),before=bottom)
+            else:more.pack_forget()
+        reconcile();self.background_refresh=reconcile
 
 
     def set_detail_tab(self, tab):
@@ -1551,43 +1913,69 @@ class Dashboard:
             self.render_page()
             return
         en = self.language == "en"
+        task = next((task for task in self.snapshot.get('tasks', []) if task['id'] == self.selected_task), {})
         header = self.tk.Frame(self.content, bg=self.bg)
-        header.pack(fill="x", pady=(5, 8))
+        header.pack(fill="x", pady=(3, 5))
         titleline = self.tk.Frame(header, bg=self.bg)
         titleline.pack(fill="x")
-        self.filter_chip(titleline, "←", self.go_back).pack(side="left", padx=(0, 10))
-        self.label(titleline, row["values"][0], 21, bold=True, raw=True).pack(side="left")
-        self.label(titleline, row["values"][2], 13, self.accent, raw=True).pack(side="right", padx=6)
+        self.filter_chip(titleline, "←", self.go_back).pack(side="left", padx=(0, 8))
+        title = self.label(titleline, row["values"][0], 20, bold=True, raw=True)
+        title.pack(side="left", fill="x", expand=True)
+        self.detail_title_label=title
+        files = [item for item in self.snapshot.get("artifacts", []) if item["task_id"] == self.selected_task]
+        self.filter_chip(titleline, "More ⌃" if en and getattr(self,'detail_meta',False) else "更多 ⌃" if getattr(self,'detail_meta',False) else "More ⌄" if en else "更多 ⌄", self.toggle_detail_meta).pack(side="right", padx=(6,0))
+        self.output_button(titleline, ("← Conversation" if en else "← 会话") if getattr(self,"detail_tab","timeline")=="files" else ("Files" if en else "成果")+f" · {task_output_summary(self.snapshot,self.selected_task).get('count',0)}", lambda: self.set_detail_tab('timeline' if getattr(self,'detail_tab','timeline')=='files' else 'files'), self.selected_task).pack(side="right", padx=(6,0))
+        participants = collaboration_participants(self.snapshot,self.selected_task)
+        if True:
+            group = self.tk.Canvas(titleline, width=min(3,len(participants))*24+12+(30 if len(participants)>3 else 0), height=34, bg=self.bg, bd=0, highlightthickness=1, highlightbackground=self.bg, highlightcolor=self.accent, takefocus=1)
+            group.pack(side='right',padx=(7,0));self.detail_avatar_group=group
+            def show_participants(event=None):
+                self.detail_meta=True;self.render_page();return 'break'
+            group.bind('<Return>',show_participants);group.bind('<space>',show_participants)
+            group.bind('<Configure>',lambda event:self.draw_participant_group(group,participants,event.width,3,show_participants))
+        self.detail_status_label=self.label(titleline,row['values'][2],12,self.accent,raw=True)
+        self.detail_status_label.pack(side='right',padx=6)
+        def fit_title(event):
+            title.configure(text=self.cut_text(row['values'][0],max(40,event.width),20,True))
+        title.bind('<Configure>',fit_title)
+        secondary = self.tk.Frame(header, bg=self.bg)
+        if getattr(self,'detail_meta',False):secondary.pack(fill='x',pady=(5,0))
+        self.detail_header_secondary = secondary
+        self.conversation_header_compact = False
+        self.label(secondary,collaboration_mode(task,self.language),12,self.muted,raw=True).pack(side='left')
+        if getattr(self,'detail_meta',False):self.filter_chip(secondary,'Conversation' if en else '协作会话',lambda:self.set_detail_tab('timeline'),getattr(self,'detail_tab','timeline')=='timeline').pack(side='right')
         progress = task_progress(self.snapshot, self.selected_task)
         agent = progress["lead"]["agent"]
-        owner = profile_reference(agent,self.language) if agent else ("Unassigned" if en else "未分配")
-        current = [item for item in self.snapshot.get('agent_run_assignments',[]) if agent and item['agent_id']==agent['id'] and item['run_id']==progress['current_run_id']]
-        work = work_type_label(current[0]["work_type"], self.language) if current else ("Standby" if en else "待命") if agent and agent.get("status") == "idle" else ("Unconfirmed" if en else "未确认")
-        meta = participant_caption(progress, self.language) + owner + "  ·  " + work + "  ·  " + ("Updated: " if en else "更新：") + row["values"][5]
-        meta += " · " + participant_observation(agent, self.snapshot, self.language, timezone=self.timezone) + (" · Run " if en else " · 运行 ") + str(progress["current_run_id"] or "—")
-        self.label(header, meta, 12, self.muted, raw=True).pack(anchor="w", pady=(7, 3))
-        self.render_output_bar(header, self.selected_task, detail=True)
         closeout = (row.get("run") or {}).get("closeout")
-        if closeout:
-            pinned = ("Deliverables: " if en else "交付：") + self.cut_text(closeout["summary"], 600, 12)
-            self.label(header, pinned, 12, self.fg, raw=True).pack(anchor="w", pady=(3, 2))
-            checked = verification_label(closeout["verification"], self.language) + " · " + ("Limits: " if en else "限制：") + self.cut_text(closeout["limits"], 580, 12)
-            self.label(header, checked, 12, self.muted, raw=True).pack(anchor="w")
-        tabs = self.tk.Frame(header, bg=self.bg)
-        tabs.pack(fill="x", pady=(4, 0))
-        files = [item for item in self.snapshot.get("artifacts", []) if item["task_id"] == self.selected_task]
-        self.filter_chip(tabs, "Timeline" if en else "时间线", lambda: self.set_detail_tab("timeline"), getattr(self, "detail_tab", "timeline") == "timeline").pack(side="left", padx=(0, 7))
-        self.filter_chip(tabs, ("Files" if en else "文件")+f" · {len(files)}", lambda: self.set_detail_tab("files"), getattr(self, "detail_tab", "timeline") == "files").pack(side="left")
-        self.filter_chip(tabs, ("Less ⌃" if en else "收起 ⌃") if getattr(self, "detail_meta", False) else ("Details ⌄" if en else "更多信息 ⌄"), self.toggle_detail_meta).pack(side="right")
+        def header_refresh():
+            current=next((value for value in self.rows if value['id']==self.selected_task),None)
+            if current:
+                if current['values'][0]!=row['values'][0]:title.configure(text=current['values'][0])
+                if current['values'][2]!=row['values'][2]:self.detail_status_label.configure(text=current['values'][2])
+                row.update(current)
+            people=collaboration_participants(self.snapshot,self.selected_task)
+            if display_signature(people)!=display_signature(participants):
+                participants[:]=people;width=min(3,len(people))*24+12+(30 if len(people)>3 else 0)
+                group.configure(width=width);group.delete('participant-group');self.draw_participant_group(group,people,width,3,show_participants)
+            button=self.output_buttons.get((self.selected_task,'files'))
+            if button is not None:
+                label=('← Conversation' if en else '← 会话') if getattr(self,'detail_tab','timeline')=='files' else ('Files' if en else '成果')+' · '+str(task_output_summary(self.snapshot,self.selected_task).get('count',0))
+                self.patch_caption(button,label)
+        self.live_updates.append(header_refresh)
         area = self.scroll_area()
-        if getattr(self, "detail_tab", "timeline") == "timeline":
+        if hasattr(self, "page_scroll"):
+            self.page_scroll.on_scroll = self.update_conversation_header
+        if getattr(self,'detail_meta',False):
+            owner = profile_reference(agent,self.language) if agent else ('Unassigned' if en else '未分配')
+            self.label(area,owner+' · '+participant_observation(agent,self.snapshot,self.language,timezone=self.timezone),12,self.muted,raw=True,wrap=800).pack(anchor='w',pady=(6,3))
+            self.render_output_bar(area,self.selected_task,detail=True)
             self.render_task_participants(area,self.selected_task)
-            self.render_progress_detail(area, self.selected_task, progress)
+            self.render_progress_detail(area,self.selected_task,progress)
         lifecycle = row.get("run") or {}
         if getattr(self, "detail_tab", "timeline") == "files" and not getattr(self, "detail_meta", False):
             self.render_task_files(area, files)
             return
-        if closeout:
+        if closeout and getattr(self, "detail_meta", False):
             self.label(area, "Final deliverables & verification" if en else "最终产出与验证", 16, self.fg, True, raw=True).pack(anchor="w", pady=(0, 6))
             state_note = ("Completion gate checked" if en else "已通过完成门槛") if closeout.get("completed_at") else ("Recorded; completion gate not yet checked" if en else "已登记；尚未通过完成门槛")
             self.label(area, state_note + " · " + verification_label(closeout["verification"], self.language), 12, self.muted, raw=True).pack(anchor="w")
@@ -1599,7 +1987,7 @@ class Dashboard:
                 if artifact:
                     self.label(area, artifact["title"] + " · " + artifact_delivery_label(artifact, self.language), 12, self.muted, raw=True, wrap=800).pack(anchor="w", pady=3)
             self.filter_chip(area, "View files" if en else "查看文件", lambda: self.set_detail_tab("files")).pack(anchor="w", pady=(4, 12))
-        elif lifecycle.get("status") == "succeeded":
+        elif lifecycle.get("status") == "succeeded" and getattr(self, "detail_meta", False):
             self.label(area, "Legacy completion; no evidence gate record" if en else "历史完成记录；未登记完成门槛依据", 12, self.muted, raw=True).pack(anchor="w", pady=(0, 8))
         if getattr(self, "detail_meta", False):
             for field, zh, english in (("lifecycle_reason", "状态原因", "Reason"), ("next_step", "下一步", "Next step"), ("lifecycle_evidence", "状态依据", "Evidence")):
@@ -1631,64 +2019,219 @@ class Dashboard:
         if getattr(self, "detail_tab", "timeline") == "files":
             self.render_task_files(area, files)
             return
-        records = timeline_records(self.snapshot, self.selected_task)
-        self.label(area, "Newest first · original timestamps" if en else "最新在前 · 按原始时间排序", 13, self.muted, raw=True).pack(anchor="w", pady=(0, 10))
-        for record in records:
-            surface, inner = self.card(area, 150)
-            surface.pack(fill="x", pady=(0, 12))
-            title = self.t(record["title"]) if record["kind"] in ("event", "note") else stage_label(record["title"], self.language)
-            if record["state"]:
-                title += "  ·  " + self.t(STATES.get(record["state"], record["state"]))
-            self.label(inner, title, 16, self.accent, True, raw=True).pack(anchor="w")
-            self.label(inner, self.stamp(record["created"]), 12, self.muted).pack(anchor="w", pady=(3, 9))
-            paragraph = self.detail_paragraph(inner, record["message"])
-            pending = {"id": None}
-            def fit_paragraph(event=None, paragraph=paragraph, frame=inner, card=surface, pending=pending):
-                if pending["id"] is not None:
-                    return
-                def measure():
-                    pending["id"] = None
-                    if not paragraph.winfo_exists():
-                        return
-                    count = paragraph.count("1.0", "end-1c", "displaylines")
-                    lines = (count[0] if count else 0)+1
-                    if int(paragraph.cget("height")) != lines:
-                        paragraph.configure(height=lines)
-                    def resize_card():
-                        if frame.winfo_exists():
-                            wanted = frame.winfo_reqheight()+39
-                            if abs(int(card.cget("height"))-wanted) > 2:
-                                card.configure(height=wanted)
-                    self.root.after_idle(resize_card)
-                pending["id"] = self.root.after_idle(measure)
-            paragraph.bind("<Configure>", fit_paragraph, add="+")
-        if not records:
-            self.label(area, "暂无工作记录", 17, self.muted).pack(anchor="w", pady=15)
-
-
-    def render_task_files(self, area, files):
-        en = self.language == "en"
-        self.label(area, "Registered outputs only · private task folder" if en else "只列已登记正式产出 · 私有任务文件夹", 12, self.muted, raw=True).pack(anchor="w", pady=(2, 12))
-        for artifact in files:
-            surface, body = self.card(area, 140)
-            surface.pack(fill="x", pady=(0, 12))
-            self.label(body, artifact["title"], 17, bold=True, raw=True).pack(anchor="w")
-            line = artifact_kind_label(artifact["kind"], self.language) + f" · {artifact['size']:,} B · " + self.stamp(artifact["created"])
-            self.label(body, line, 12, self.muted, raw=True).pack(anchor="w", pady=5)
-            self.label(body, artifact_delivery_label(artifact, self.language), 12, self.muted, raw=True, wrap=760).pack(anchor="w", pady=3)
-            self.label(body, artifact["relative_path"], 11, self.muted, raw=True, wrap=760).pack(anchor="w")
-            self.label(body, "SHA-256 · " + artifact["sha256"][:20] + "…", 11, self.muted, raw=True).pack(anchor="w", pady=5)
-            if artifact["relative_path"].endswith(".png"):
-                self.filter_chip(body, "Preview PNG" if en else "预览 PNG", lambda key=artifact["id"]: self.preview_artifact(key)).pack(anchor="w", pady=4)
-            elif Path(artifact["relative_path"]).suffix in (".txt", ".md", ".json", ".csv"):
-                self.filter_chip(body, "Read text" if en else "阅读文本", lambda key=artifact["id"]: self.preview_text_artifact(key)).pack(anchor="w", pady=4)
-            elif artifact["kind"] == "video":
-                self.label(body, "Video metadata only; open the output folder to use the file. No automatic playback." if en else "视频仅登记元数据；可从成果文件夹使用文件，不会自动播放。", 11, self.muted, raw=True, wrap=760).pack(anchor="w", pady=4)
+        self.render_conversation_filters(area,task)
+        stream=self.tk.Frame(area,bg=self.bg);stream.pack(fill='x')
+        notice=self.label(area,'',12,self.muted,raw=True,wrap=800)
+        paging=self.tk.Frame(area,bg=self.bg);paging.pack(fill='x',pady=(6,10))
+        previous=self.button(paging,'Previous' if en else '上一页',lambda:self.change_conversation_filter(offset=max(0,getattr(self,'conversation_offset',0)-100)))
+        previous.pack(side='left')
+        page_label=self.label(paging,'',12,self.muted,raw=True);page_label.pack(side='left',padx=12)
+        following=self.button(paging,'Next' if en else '下一页',lambda:self.change_conversation_filter(offset=getattr(self,'conversation_offset',0)+100))
+        following.pack(side='left')
+        new_items=self.button(self.content,'',lambda:apply_pending())
+        mounted={};models={};pending={'data':None,'job':None};last_query={'signature':None}
+        self.conversation_anchors=mounted
+        def read_records():
+            filters=getattr(self,'conversation_filters',{});offset=getattr(self,'conversation_offset',0)
+            try:
+                data=self.store.collaboration_timeline(self.selected_task,include_children=task.get('activity_kind')=='project',agent_id=filters.get('agent') or None,work_type=filters.get('role') or None,child_task_id=filters.get('task') or None,limit=100,offset=offset)
+                rows=[{**r,'title':r.get('stage') or ('运行事件' if r['kind']=='event' else '记录'),'state':r.get('state'),'source_id':str(r['id'])} for r in data['rows']]
+                data={**data,'rows':rows,'error':False}
+            except (AttributeError,OSError,sqlite3.Error,ValueError):
+                rows=collaboration_records(self.snapshot,self.selected_task,filters)
+                data={'rows':rows,'total':len(rows),'offset':0,'limit':100,'has_more':False,'error':True}
+            data['rows']=sorted(data['rows'],key=lambda r:(r['created'],r['kind'],r['source_id']))
+            return data
+        def apply(data,follow=False):
+            wanted=[r.get('key') or r['kind']+':'+r['source_id'] for r in data['rows']]
+            for key in list(mounted):
+                if key not in wanted:mounted.pop(key).destroy();models.pop(key,None)
+            previous_widget=None
+            for record,key in zip(data['rows'],wanted):
+                signature=display_signature(record)
+                if key not in mounted or models.get(key)!=signature:
+                    if key in mounted:mounted.pop(key).destroy()
+                    mounted[key]=self.conversation_message(stream,record,task);models[key]=signature
+                    options={'fill':'x','pady':(0,12)}
+                    if previous_widget is not None:options['after']=previous_widget
+                    elif stream.winfo_children():
+                        other=next((w for w in stream.winfo_children() if w is not mounted[key]),None)
+                        if other is not None:options['before']=other
+                    mounted[key].pack(**options)
+                previous_widget=mounted[key]
+            if data['error']:
+                notice.configure(text='Snapshot only; full history unavailable' if en else '仅快照窗口；完整记录读取失败');notice.pack(anchor='w',pady=6,before=paging)
+            elif not wanted:
+                notice.configure(text='No matching records' if en else '没有符合筛选的记录');notice.pack(anchor='w',pady=6,before=paging)
+            else:notice.pack_forget()
+            previous.configure(state='normal' if data['offset'] else 'disabled');following.configure(state='normal' if data['has_more'] else 'disabled')
+            page_label.configure(text=f"{data['offset']+min(1,len(wanted))}–{data['offset']+len(wanted)} / {data['total']}")
+            if data['total']>data['limit']:paging.pack(fill='x',pady=(6,10))
+            else:paging.pack_forget()
+            pending['data']=None;new_items.place_forget()
+            if follow and hasattr(self,'page_scroll'):
+                self.page_scroll.follow_tail=True
+                canvas=self.page_scroll
+                self.root.after_idle(lambda:canvas.follow_end() if self.page_scroll is canvas and canvas.winfo_exists() and hasattr(canvas,'follow_end') else None)
+        def apply_pending():
+            if pending['data'] is not None:apply(pending['data'],True)
+        def background():
+            current=next((item for item in self.rows if item['id']==self.selected_task),None)
+            if current:
+                if current['values'][0]!=row['values'][0]:title.configure(text=current['values'][0])
+                if current['values'][2]!=row['values'][2]:self.detail_status_label.configure(text=current['values'][2])
+                row.update(current)
+            people=collaboration_participants(self.snapshot,self.selected_task)
+            if display_signature(people)!=display_signature(participants):
+                participants[:]=people;width=min(3,len(people))*24+12+(30 if len(people)>3 else 0)
+                group.configure(width=width);group.delete('participant-group');self.draw_participant_group(group,people,width,3,show_participants)
+            data=read_records();signature=display_signature(data)
+            if signature==last_query['signature']:return
+            last_query['signature']=signature
+            at_bottom=not mounted or (hasattr(self,'page_scroll') and self.page_scroll.yview()[1]>=.98)
+            if at_bottom:apply(data,True)
             else:
-                self.label(body, "Metadata only; view the delivered attachment separately" if en else "仅显示登记信息；请查看另行交付的附件", 11, self.muted, raw=True).pack(anchor="w", pady=4)
-            self.fit_card(surface, body)
-        if not files:
-            self.label(area, "No registered outputs yet" if en else "尚无已登记产出", 17, self.muted, raw=True).pack(anchor="w", pady=20)
+                pending['data']=data;count=sum((r.get('key') or r['kind']+':'+r['source_id']) not in mounted for r in data['rows'])
+                new_items.configure(text=(f'{count} new records ↓' if en else f'{count} 条新记录 ↓') if count else ('Records updated ↓' if en else '记录已更新 ↓'))
+                new_items.place(relx=1,rely=1,anchor='se',x=-26,y=-12)
+        initial=read_records();last_query['signature']=display_signature(initial);apply(initial)
+        if hasattr(self,'page_scroll'):
+            self.page_scroll.follow_tail=False
+            def scroll_update(first,last):
+                self.update_conversation_header(first,last)
+                if float(last)>=.98 and pending['data'] is not None and pending['job'] is None:
+                    def follow_pending():pending['job']=None;apply_pending()
+                    pending['job']=self.root.after_idle(follow_pending)
+            self.page_scroll.on_scroll=scroll_update
+        self.background_refresh=background
+        if getattr(self,'layout_diagnostics',False) and hasattr(self.page_scroll,'layout_diagnostic'):
+            canvas=self.page_scroll
+            self.root.after(700,canvas.layout_diagnostic)
+
+
+    def conversation_message(self,area,record,task):
+        actor = collaboration_actor(record,self.snapshot,self.language)
+        surface, inner = self.card(area, 150, fill=actor['color'])
+        heading = self.tk.Frame(inner,bg=actor['color']);heading.pack(fill='x')
+        portrait = self.tk.Canvas(heading,width=36,height=36,bg=actor['color'],highlightthickness=0,bd=0);portrait.pack(side='left',padx=(0,10))
+        if actor['known']:
+            draw_portrait(portrait,actor['agent'],0,0,36)
+        else:
+            portrait.create_oval(0,0,36,36,fill='#e5e8e4',outline='')
+            portrait.create_oval(13,7,23,17,fill='#87948b',outline='')
+            portrait.create_arc(8,17,28,37,start=0,extent=180,fill='#87948b',outline='')
+        authorline = self.tk.Frame(heading,bg=actor['color']);authorline.pack(side='left',fill='x',expand=True)
+        self.label(authorline,actor['label'],14,self.fg,True,raw=True).pack(anchor='w')
+        if actor.get('short_id') or actor['role']:
+            self.label(authorline,((actor.get('short_id')+' · ') if actor.get('short_id') else '')+actor['role'],11,self.muted,raw=True).pack(anchor='w')
+        self.label(heading,self.stamp(record['created']),11,self.muted,raw=True).pack(side='right')
+        title = self.t(record["title"]) if record["kind"] in ("event", "note") else stage_label(record["title"], self.language)
+        if record.get("state"):
+            title += "  ·  " + self.t(STATES.get(record["state"], record["state"]))
+        if task.get('activity_kind')=='project':
+            title += ' · '+next((t['name'] for t in self.snapshot.get('tasks',[]) if t['id']==record.get('task_id')),record.get('task_id',''))
+        self.label(inner,title,12,self.muted,raw=True).pack(anchor='w',pady=(8,6))
+        paragraph = self.detail_paragraph(inner, record["message"])
+        pending = {"id": None}
+        def fit_paragraph(event=None, paragraph=paragraph, frame=inner, card=surface, pending=pending):
+            if pending["id"] is not None:
+                return
+            def measure():
+                pending["id"] = None
+                if not paragraph.winfo_exists():
+                    return
+                count = paragraph.count("1.0", "end-1c", "displaylines")
+                lines = (count[0] if count else 0)+1
+                if int(paragraph.cget("height")) != lines:
+                    paragraph.configure(height=lines)
+                def resize_card():
+                    if frame.winfo_exists():
+                        wanted = frame.winfo_reqheight()+39
+                        if abs(int(card.cget("height"))-wanted) > 2:
+                            card.configure(height=wanted)
+                self.root.after_idle(resize_card)
+            pending["id"] = self.root.after_idle(measure)
+        paragraph.bind("<Configure>", fit_paragraph, add="+")
+        return surface
+
+    def update_conversation_header(self, first=None, last=None):
+        secondary = getattr(self,'detail_header_secondary',None)
+        if self.page != 'conversations' or not self.selected_task or secondary is None or not secondary.winfo_exists():
+            return
+        if not getattr(self,'detail_meta',False):return
+        top = self.page_scroll.canvasy(0)
+        compact = getattr(self,'conversation_header_compact',False)
+        wanted = top > (8 if compact else 64)
+        focused = self.root.focus_get()
+        if wanted and focused is not None and (focused is secondary or str(focused).startswith(str(secondary)+'.')):
+            return
+        if wanted != compact:
+            self.conversation_header_compact = wanted
+            if wanted:secondary.pack_forget()
+            else:secondary.pack(fill='x',pady=(5,0))
+
+    def change_conversation_filter(self, key=None, value=None, offset=0):
+        if not hasattr(self,'conversation_filters'):self.conversation_filters={}
+        if key:self.conversation_filters[key]=value
+        self.conversation_offset=offset
+        self.scroll_positions[self.viewport_key()]=0
+        self.render_page()
+        widget=getattr(self,'conversation_filter_widgets',{}).get(key)
+        if widget is not None:self.root.after_idle(widget.focus_set)
+
+    def render_conversation_filters(self, area, task):
+        if getattr(self,'conversation_task',None)!=self.selected_task:
+            self.conversation_task=self.selected_task;self.conversation_filters={};self.conversation_offset=0
+        en=self.language=='en';scope=collaboration_scope(self.snapshot,self.selected_task)
+        agents={};roles=set()
+        for episode in self.snapshot.get('assignment_episodes',[]):
+            if episode.get('task_id') in scope:
+                agent=next((a for a in self.snapshot.get('agents',[]) if a['id']==episode['agent_id']),None)
+                if agent:agents[agent['id']]=agent
+                roles.add(episode.get('work_type','unspecified'))
+        for record in collaboration_records(self.snapshot,self.selected_task):
+            actor=collaboration_actor(record,self.snapshot,self.language)
+            if actor['known']:
+                agents[actor['id']]=actor['agent'];roles.add((record.get('attribution') or {}).get('work_type','unspecified'))
+        strip=self.tk.Frame(area,bg=self.bg);strip.pack(fill='x',pady=(3,6))
+        bar=self.tk.Frame(area,bg=self.tint)
+        def toggle():
+            if bar.winfo_manager():bar.pack_forget()
+            else:bar.pack(fill='x',pady=(0,8),after=strip)
+        self.filter_chip(strip,'Filters ⌄' if en else '筛选 ⌄',toggle).pack(side='left')
+        for key,value in self.conversation_filters.items():
+            if value:
+                label=('Anonymous' if en else '匿名') if value=='unattributed' and key=='agent' else work_type_label(value,self.language) if key=='role' else agent_text(agents[value],'name',self.language) if key=='agent' and value in agents else next((t['name'] for t in self.snapshot.get('tasks',[]) if t['id']==value),value)
+                self.filter_chip(strip,label+' ×',lambda key=key:self.change_conversation_filter(key,'')).pack(side='left',padx=(6,0))
+        style=self.ttk.Style(self.root)
+        style.configure('Conversation.TCombobox',padding=(9,7),fieldbackground='#f8fbf6',background=self.tint,foreground=self.fg,arrowcolor=self.accent,bordercolor='#cfdfd0',arrowsize=14)
+        style.map('Conversation.TCombobox',fieldbackground=[('readonly','#f8fbf6')],foreground=[('readonly',self.fg)])
+        fields=[('agent','Author' if en else '作者',[('', 'All authors' if en else '所有作者'),('unattributed','Anonymous' if en else '匿名')]+[(key,agent_text(agent,'name',self.language)+' · '+profile_reference(agent,self.language)) for key,agent in sorted(agents.items())]),
+                ('role','Role at event' if en else '事件时职责',[('', 'All roles' if en else '所有职责'),('unattributed','Unrecorded' if en else '未记录')]+[(role,work_type_label(role,self.language)) for role in sorted(roles)])]
+        if task.get('activity_kind')=='project':
+            fields.append(('task','Task' if en else '任务',[('', 'Whole project' if en else '整个项目')]+[(t['id'],t['name']) for t in self.snapshot.get('tasks',[]) if t['id'] in scope]))
+        self.conversation_filter_widgets={}
+        for column,(key,label,options) in enumerate(fields):
+            frame=self.tk.Frame(bar,bg=self.bg);frame.grid(row=0,column=column,sticky='ew',padx=(0,10));bar.grid_columnconfigure(column,weight=1)
+            self.label(frame,label,11,self.muted,raw=True).pack(anchor='w',pady=(0,3))
+            combo=self.ttk.Combobox(frame,style='Conversation.TCombobox',state='readonly',values=[label for _,label in options],width=18)
+            combo.pack(fill='x');combo.current(next((i for i,(value,_) in enumerate(options) if value==self.conversation_filters.get(key,'')),0))
+            combo.bind('<<ComboboxSelected>>',lambda event,key=key,options=options,combo=combo:self.change_conversation_filter(key,options[combo.current()][0]))
+            self.conversation_filter_widgets[key]=combo
+
+
+    def render_task_files(self,area,files):
+        en=self.language=='en';task_id=self.selected_task
+        self.label(area,'Registered outputs only · private task folder' if en else '只列已登记正式产出 · 私有任务文件夹',12,self.muted,raw=True).pack(anchor='w',pady=(2,12))
+        def model(artifact):
+            summary=artifact_kind_label(artifact['kind'],self.language)+f" · {artifact['size']:,} B · "+self.stamp(artifact['created'])
+            details=[('path',artifact['relative_path']),('checksum','SHA-256 · '+artifact['sha256'][:20]+'…')];actions=[]
+            if artifact['relative_path'].endswith('.png'):actions.append(('preview','Preview PNG' if en else '预览 PNG',lambda key=artifact['id']:self.preview_artifact(key)))
+            elif Path(artifact['relative_path']).suffix in ('.txt','.md','.json','.csv'):actions.append(('preview','Read text' if en else '阅读文本',lambda key=artifact['id']:self.preview_text_artifact(key)))
+            elif artifact['kind']=='video':details.append(('boundary','Video metadata only; open the output folder to use the file. No automatic playback.' if en else '视频仅登记元数据；可从成果文件夹使用文件，不会自动播放。'))
+            else:details.append(('boundary','Metadata only; view the delivered attachment separately' if en else '仅显示登记信息；请查看另行交付的附件'))
+            return {'title':artifact['title'],'summary':summary,'status':artifact_delivery_label(artifact,self.language),'details':details,'actions':actions}
+        self.keyed_registry(area,lambda:[a for a in self.snapshot.get('artifacts',[]) if a['task_id']==task_id],model,minimum=700,maximum=1)
 
     def preview_text_artifact(self, key):
         en = self.language == "en"
@@ -1763,6 +2306,9 @@ class Dashboard:
         grid.card_items = []
         grid.card_columns = 0
         def layout(event=None):
+            # Reconciliation can destroy a card before its replacement is built.
+            # The new card requests layout immediately, so drop dead slots first.
+            grid.card_items = [child for child in grid.card_items if child.winfo_exists()]
             width = event.width if event is not None else grid.winfo_width()
             columns = max(1, min(maximum, (max(1, width)+14)//(minimum+14)))
             if columns != grid.card_columns:
@@ -1792,37 +2338,34 @@ class Dashboard:
             canvas.tag_bind(tag,'<Button-1>',open_group)
 
     def render_task_participants(self, area, task_id):
-        rows=activity_participants(self.snapshot,task_id)
+        rows=collaboration_participants(self.snapshot,task_id)
         if not rows:return
         en=self.language=='en'
-        self.label(area,('Activity participants · ' if en else '活动参与者 · ')+str(len(rows)),16,self.fg,True,raw=True).pack(anchor='w',pady=(0,8))
-        grid=self.card_grid(area,minimum=285,maximum=3)
+        self.label(area,('Current round participants · ' if en else '当前轮次参与者 · ')+str(len(rows)),16,self.fg,True,raw=True).pack(anchor='w',pady=(0,8))
         for row in rows:
             agent=row['agent'];roles=list(dict.fromkeys(work_type_label(a['work_type'],self.language) for a in row['assignments']))
-            summary=('Recorded roles · ' if en else '已登记职责 · ')+' / '.join(roles)
-            if getattr(self,'detail_meta',False):
-                summary+='\n'+('Nickname · ' if en else '昵称 · ')+agent_text(agent,'name',self.language)+'\n'+identity_label(agent,self.language)
-                summary+='\n'+source_label(agent,self.language)+(' · Identity checked at ' if en else ' · 身份核验时间 ')+timestamp_label(agent.get('identity_observed_at'),self.timezone)
-                summary+='\n'+('Panel-local display ID; not a platform UUID' if en else '面板短编号，不是平台 UUID')
-                for assignment in row['assignments']:
-                    summary+='\n'+(assignment['run_id'] or ('Owner record' if en else '负责人记录'))+' · '+work_type_label(assignment['work_type'],self.language)
-            self.compact_row(grid,('Panel ID ' if en else '面板编号 ')+row['short_id'],summary,participant_observation(agent,self.snapshot,self.language,timezone=self.timezone),avatar=agent)
+            line=self.tk.Frame(area,bg=self.bg);line.pack(fill='x',pady=3)
+            portrait=self.tk.Canvas(line,width=26,height=26,bg=self.bg,bd=0,highlightthickness=0);portrait.pack(side='left',padx=(0,8));draw_portrait(portrait,agent,0,0,26)
+            self.label(line,profile_reference(agent,self.language)+' · '+agent_text(agent,'name',self.language)+' · '+' / '.join(roles),12,self.muted,raw=True,wrap=750).pack(side='left')
+            self.label(area,source_label(agent,self.language)+(' · Identity checked at ' if en else ' · 身份核验时间 ')+timestamp_label(agent.get('identity_observed_at'),self.timezone)+' · '+participant_observation(agent,self.snapshot,self.language,timezone=self.timezone),11,self.muted,raw=True,wrap=750).pack(anchor='w',padx=(34,0))
 
-    def compact_row(self, parent, title, summary, status="", command=None, avatar=None, participants=None):
-        surface, box = self.card(parent, 170)
+    def compact_row(self, parent, title, summary, status="", command=None, avatar=None, participants=None, bounded=False):
+        surface, box = self.card(parent, 244 if bounded else 170)
         if hasattr(parent, "card_items"):
             parent.card_items.append(surface)
             parent.reflow_cards()
         else:
             surface.pack(fill="x", pady=(0, 8))
-        if participants:
+        box.surface=surface
+        box.status_label=None;box.participant_group=None
+        if participants is not None:
             top=self.tk.Frame(box,bg=self.panel);top.pack(fill='x',pady=(0,8))
-            self.label(top,status,12,self.accent,raw=True).pack(side='right')
+            box.status_label=self.label(top,status,12,self.accent,raw=True);box.status_label.pack(side='right')
             width=min(3,len(participants))*24+10+(32 if len(participants)>3 else 0)
             group=self.tk.Canvas(top,width=width,height=32,bg=self.panel,highlightthickness=0)
-            group.pack(side='right',padx=(0,10));self.draw_participant_group(group,participants,width,0,command)
-        if status and not avatar and not participants:
-            self.label(box, status, 14, self.accent, raw=True).pack(anchor="w", fill="x", pady=(0, 8))
+            group.pack(side='right',padx=(0,10));self.draw_participant_group(group,participants,width,0,command);box.participant_group=group
+        if status and not avatar and participants is None and not bounded:
+            box.status_label=self.label(box,status,14,self.accent,raw=True);box.status_label.pack(anchor="w",fill="x",pady=(0,8))
         if avatar:
             header = self.tk.Frame(box, bg=self.panel)
             header.pack(fill="x")
@@ -1835,8 +2378,12 @@ class Dashboard:
             if status:
                 self.label(words, status, 12, self.accent, raw=True).pack(anchor="w", fill="x", pady=(4, 0))
         else:
-            self.label(box, title, 20, self.fg, True, raw=True).pack(anchor="w", fill="x")
-        self.label(box, summary, 15, self.muted, raw=True).pack(anchor="w", fill="x", pady=(9, 0))
+            box.title_label=self.label(box,title,20,self.fg,True,raw=True);box.title_label.pack(anchor="w",fill="x")
+        if bounded:
+            box.title_label.configure(height=2,anchor='nw')
+            box.status_label=self.label(box,status,12,self.accent,raw=True);box.status_label.pack(anchor='w',fill='x',pady=(7,0))
+        box.summary_label=self.label(box,summary,14 if bounded else 15,self.muted,raw=True);box.summary_label.pack(anchor="w",fill="x",pady=(9,0))
+        if bounded:box.summary_label.configure(height=2,anchor='nw')
         if command:
             box.detail_link = self.label(box, "Open details  ›" if self.language == "en" else "查看详情  ›", 14, self.accent, raw=True)
             box.detail_link.pack(anchor="w", pady=(9, 0))
@@ -1859,40 +2406,55 @@ class Dashboard:
                     else:
                         walk(child)
             walk(box)
-        box.bind("<Configure>", wrap_children, add="+")
-        self.fit_card(surface, box)
+        if bounded:
+            source={'title':title,'summary':summary,'status':status}
+            def fit_bounded(event=None):
+                import tkinter.font as font
+                width=max(20,box.winfo_width())
+                for field,widget,pixels,lines in [('title',box.title_label,20,2),('status',box.status_label,12,1),('summary',box.summary_label,14,2)]:
+                    measure=font.Font(root=self.root,family=self.font,size=-pixels,weight='bold' if field=='title' else 'normal').measure
+                    value=source[field]
+                    if field=='summary':value='\n'.join(bounded_card_lines(line,width,measure,1) for line in value.splitlines()[:2])
+                    else:value=bounded_card_lines(value,width,measure,lines)
+                    if widget.cget('text')!=value:widget.configure(text=value,wraplength=0)
+                if surface.auto_fit:surface.configure(height=max(244,box.winfo_reqheight()+48))
+            def set_caption(field,value):source[field]=value;fit_bounded()
+            def set_expanded(value):
+                if surface.auto_fit==value:return
+                surface.auto_fit=value
+                if not value:surface.configure(height=244)
+                else:self.root.after_idle(fit_bounded)
+            surface.auto_fit=False;box.set_caption=set_caption;box.set_expanded=set_expanded
+            box.bind('<Configure>',fit_bounded,add='+')
+        else:
+            box.bind("<Configure>", wrap_children, add="+")
+            self.fit_card(surface, box)
         return box
 
+    def activity_row_summary(self,row):
+        progress = task_progress(self.snapshot,row['id'])
+        text = progress['current_step'] or (row.get('run') or {}).get('lifecycle_reason') or activity_summary(self.snapshot,row['id'],self.language)
+        summary = compact_task_excerpt(text)
+        status = self.t(STATUS.get(row['status'],row['status']))
+        return row['values'][0],summary,status
+
     def render_conversation_list(self, selection=()):
-        self.workspace_toolbar()
-        area = self.scroll_area()
-        rows = workspace_rows(self.rows, self.workspace_filter, self.search_query.get())
-        grid = self.card_grid(area, minimum=370, maximum=2)
-        for row in rows:
-            values = row["values"]
-            summary = values[1] + " · " + values[3] + "\n" + self.t("最后更新：") + values[5]
-            progress = task_progress(self.snapshot, row["id"])
-            owner = progress["lead"]["agent"]
-            owner_name = profile_reference(owner,self.language) if owner else ("Unassigned" if self.language == "en" else "未分配")
-            if owner:
-                role=next((a.get("work_type") for a in self.snapshot.get("agent_run_assignments",[]) if a["agent_id"]==owner["id"] and a["run_id"]==progress["current_run_id"]),None)
-                owner_name += " · "+work_type_label(role,self.language)
-            observed = participant_observation(owner, self.snapshot, self.language, timezone=self.timezone)
-            owner_caption = participant_caption(progress, self.language)
-            summary = owner_caption + owner_name + " · " + observed + (" · Run " if self.language == "en" else " · 运行 ") + str(progress["current_run_id"] or "—") + " · " + values[1] + "\n" + values[3] + " · " + self.t("最后更新：") + values[5]
-            if len(progress.get("unpaused_runs", [])) > 1:
-                summary += "\n" + ("Unfinished runs: " if self.language == "en" else "未完成运行：") + str(len(progress["unpaused_runs"]))
-            if progress["current_step"]:
-                step = progress["current_step"].split("\n", 1)[0]
-                summary += "\n" + (("Task update: " if self.language == "en" else "任务近况：") if progress.get("scope") == "task" else ("Step: " if self.language == "en" else "当前步骤：")) + step
-            if progress["counts"]:
-                count = progress["counts"]
-                summary += f"\n{count['completed']:g}/{count['total']:g} {count['unit']}"
-            state = values[2] + ((" · Older update" if self.language == "en" else " · 更新较旧待核对") if row["warning"] else "")
-            box = self.compact_row(grid, values[0], summary, state, lambda key=row["id"]: self.open_task(key), participants=activity_participants(self.snapshot,row["id"]))
-            self.render_output_bar(box, row["id"])
-        if not rows:
-            self.label(area, "该状态暂无任务", 16, self.muted).pack(anchor="w", pady=20)
+        self.workspace_toolbar();area=self.scroll_area()
+        grid=self.card_grid(area,minimum=370,maximum=2);cards={};empty=self.label(area,'该状态暂无任务',16,self.muted)
+        def reconcile():
+            mode=getattr(self,'collaboration_mode_filter','all');tasks={t['id']:t for t in self.snapshot.get('tasks',[])}
+            rows=[r for r in workspace_rows(self.rows,self.workspace_filter,self.search_query.get()) if mode=='all' or (tasks.get(r['id'],{}).get('activity_kind')=='project' if mode=='project' else tasks.get(r['id'],{}).get('collaboration_mode','single')==mode)]
+            wanted=[row['id'] for row in rows]
+            for key in list(cards):
+                if key not in wanted:cards.pop(key).destroy()
+            for index,row in enumerate(rows):
+                if row['id'] not in cards:
+                    cards[row['id']]=self.airy_task_card(grid,row,index)
+            ordered=[cards[key] for key in wanted]
+            if grid.card_items!=ordered:grid.card_items=ordered;grid.reflow_cards()
+            if rows:empty.pack_forget()
+            else:empty.pack(anchor='w',pady=20)
+        reconcile();self.background_refresh=reconcile
 
     def toggle_registry_detail(self, kind, key):
         attribute = "expanded_" + kind
@@ -1905,202 +2467,182 @@ class Dashboard:
         self.render_page()
 
     def render_schedules(self):
-        area = self.scroll_area()
-        en = self.language == "en"
-        self.label(area, "Platform observations and result snapshots" if en else "平台配置观察与结果快照", 18, self.accent, True, raw=True).pack(anchor="w")
-        self.label(area, "Saved result snapshots do not prove schedules are enabled. Every 5 seconds refreshes local data only, without polling GitHub; external results require manual sync." if en else "已保存的结果快照不证明定时器已启用。每 5 秒只刷新本地数据，不轮询 GitHub；外部结果须手动同步。", 13, self.muted, raw=True, wrap=800).pack(anchor="w", pady=(6, 14))
-        grid = self.card_grid(area, minimum=370, maximum=2)
-        for record in self.snapshot.get("schedules", []):
-            state, timing = schedule_summary(record, self.language, self.timezone)
-            result = schedule_result_view(record, self.language, self.timezone)
-            platform = schedule_platform_view(record, self.language, self.timezone)
+        area=self.scroll_area();en=self.language=='en'
+        info=self.tk.Frame(area,bg=self.bg)
+        def toggle_info():
+            self.automation_info_expanded=not getattr(self,'automation_info_expanded',False)
+            if self.automation_info_expanded:info.pack(fill='x',pady=(0,10),before=grid_holder)
+            else:info.pack_forget()
+            self.patch_caption(info_button,('ⓘ Automation notes' if en else 'ⓘ 自动化说明')+(' ⌃' if self.automation_info_expanded else ' ⌄'))
+        info_button=self.filter_chip(area,('ⓘ Automation notes' if en else 'ⓘ 自动化说明')+(' ⌃' if getattr(self,'automation_info_expanded',False) else ' ⌄'),toggle_info)
+        info_button.pack(anchor='w',pady=(0,10))
+        self.label(info,'Recorded observations only; local refresh does not run automations or poll GitHub. Platform configuration and result snapshots are independently observed.' if en else '只读登记快照；本地刷新不会运行自动化，也不会查询 GitHub。平台配置与结果快照分别记录观察。',13,self.muted,raw=True,wrap=800).pack(anchor='w',fill='x')
+        grid_holder=self.tk.Frame(area,bg=self.bg);grid_holder.pack(fill='x')
+        if getattr(self,'automation_info_expanded',False):info.pack(fill='x',pady=(0,10),before=grid_holder)
+        def model(record):
+            state,timing=schedule_summary(record,self.language,self.timezone);result=schedule_result_view(record,self.language,self.timezone);platform=schedule_platform_view(record,self.language,self.timezone)
             if result:
-                timing = ((platform["compact"]+"\n") if platform else "") + "\n".join(result["compact"])
-            box = self.compact_row(grid, record["name"], timing, state)
-            if result and result["error"]:
-                self.label(box, result["error"], 14, "#9c611c", raw=True, wrap=800).pack(anchor="w", pady=(5, 0))
-            expanded = record["id"] in getattr(self, "expanded_schedules", set())
-            self.filter_chip(box, ("Less ⌃" if en else "收起 ⌃") if expanded else ("Details ⌄" if en else "详情 ⌄"), lambda key=record["id"]: self.toggle_registry_detail("schedules", key)).pack(anchor="e", pady=(4,0))
+                schedule_line=platform['compact'] if platform else ('Schedule not verified' if en else '计划未核验')
+                latest=((record.get('external_result') or {}).get('observation') or {}).get('latest') or {}
+                result_line=' · '.join(str(value) for value in (latest.get('calendar_date'),latest.get('status')) if value is not None) or ('No result snapshot' if en else '尚无结果快照')
+                if result['error']:result_line=('Check failed · ' if en else '检查失败 · ')+result_line
+            else:
+                schedule_line=timing;result_line='No result snapshot' if en else '尚无结果快照'
+            timing=schedule_line+'\n'+(('Latest: ' if en else '最近记录：')+result_line)
+            key=record['id'];expanded=key in getattr(self,'expanded_schedules',set());details=[]
+            actions=[('details',('Less ⌃' if en else '收起 ⌃') if expanded else ('Details ⌄' if en else '详情 ⌄'),lambda key=key:self.toggle_registry_detail('schedules',key))]
             if expanded:
-                technical_labels = {"平台任务 ID", "Platform task ID", "计划", "Schedule", "源运行编号", "Source run ID", "状态文件", "Status path", "索引文件", "Index path", "Status blob SHA", "Index blob SHA", "状态来源 URL", "Status source URL", "索引来源 URL", "Index source URL"}
-                technical = []
-                for label, value in ((platform["rows"] if platform else []) + (result["rows"] if result else [])):
-                    if label in technical_labels:
-                        technical.append((label,value))
-                    else:
-                        self.label(box,label+": "+str(value),14,self.muted,raw=True,wrap=800).pack(anchor="w",pady=3)
+                if result and result['error']:details.append(('error',result['error']))
+                technical_labels={'平台任务 ID','Platform task ID','计划','Schedule','源运行编号','Source run ID','状态文件','Status path','索引文件','Index path','Status blob SHA','Index blob SHA','状态来源 URL','Status source URL','索引来源 URL','Index path','Index source URL'}
+                technical=[]
+                for i,(label,value) in enumerate((platform['rows'] if platform else [])+(result['rows'] if result else [])):
+                    target=technical if label in technical_labels else details;target.append(('evidence:'+str(i),label+': '+str(value)))
                 if technical:
-                    technical_open = record["id"] in getattr(self, "expanded_schedule_technical", set())
-                    self.filter_chip(box, ("Hide technical details ⌃" if en else "收起技术信息 ⌃") if technical_open else ("Technical details ⌄" if en else "技术信息 ⌄"), lambda key=record["id"]: self.toggle_registry_detail("schedule_technical",key)).pack(anchor="w",pady=(8,4))
-                    if technical_open:
-                        for label,value in technical:
-                            self.label(box,label+": "+str(value),13,self.muted,raw=True,wrap=800).pack(anchor="w",pady=3)
-                metadata = (("Project" if en else "项目",record.get("project")), ("Source" if en else "来源",record.get("source")), ("Registered state (metadata)" if en else "登记状态（元数据）",record.get("state")), ("Registered planned time (unverified)" if en else "登记计划时间（未核验）",self.stamp(record["next_run"]) if record.get("next_run") is not None else ("Unknown" if en else "未知")), ("Last recorded update" if en else "最近登记更新",self.stamp(record["updated"]) if record.get("updated") is not None else ("Unknown" if en else "未知")))
-                for label, value in metadata:
-                    self.label(box,label+": "+str(value or "—"),14,self.muted,raw=True,wrap=800).pack(anchor="w",pady=3)
-                self.label(box,"Registration does not create, start or resume a scheduler" if en else "登记不会创建、启动或恢复任何定时器",14,self.muted,raw=True,wrap=800).pack(anchor="w",pady=(5,0))
-        if not self.snapshot.get("schedules"):
-            self.label(area, "尚未登记定时任务", 16, self.muted).pack(anchor="w", pady=18)
+                    opened=key in getattr(self,'expanded_schedule_technical',set());actions.append(('technical',('Hide technical ⌃' if en else '收起技术信息 ⌃') if opened else ('Technical details ⌄' if en else '技术信息 ⌄'),lambda key=key:self.toggle_registry_detail('schedule_technical',key)))
+                    if opened:details+=technical
+                for field,label,value in [('project','Project' if en else '项目',record.get('project')),('source','Source' if en else '来源',record.get('source')),('state','Registered state' if en else '登记状态',record.get('state')),('next','Planned time (unverified)' if en else '登记计划时间（未核验）',self.stamp(record.get('next_run')) if record.get('next_run') else '—'),('updated','Last recorded update' if en else '最近登记更新',self.stamp(record.get('updated')) if record.get('updated') else '—')]:details.append((field,label+': '+str(value or '—')))
+                details.append(('boundary','Registration does not create, start or resume a scheduler' if en else '登记不会创建、启动或恢复任何定时器'))
+            return {'title':record['name'],'summary':timing,'status':state,'details':details,'actions':actions}
+        self.keyed_registry(grid_holder,lambda:self.snapshot.get('schedules',[]),model,minimum=370,maximum=2,bounded=True)
 
     def render_software(self):
-        # Recovery reconstruction of read-only compact software detail controls.
-        area = self.scroll_area()
-        en = self.language == "en"
-        records = list(self.snapshot.get("software", []))
-        if not any(item.get("kind") == "dots-panel" for item in records):
-            records.insert(0,{"id":"current-viewer","name":"dots-panel","description":self.t("此窗口正在运行"),"kind":"dots-panel","version":VERSION,"available":True,"controls":["close_current_viewer"]})
-        grid = self.card_grid(area, minimum=285, maximum=3)
-        for record in records:
-            available = record.get("available")
-            state = self.t("可用" if available is True else "未检测到" if available is False else "未验证")
-            box = self.compact_row(grid, record["name"], str(record.get("version") or "—"), state)
-            key = record.get("id", record["name"])
-            expanded = key in getattr(self, "expanded_software", set())
-            self.filter_chip(box,("Less ⌃" if en else "收起 ⌃") if expanded else ("Details ⌄" if en else "详情 ⌄"),lambda key=key:self.toggle_registry_detail("software",key)).pack(anchor="e",pady=(4,0))
+        area=self.scroll_area();en=self.language=='en'
+        def records():
+            rows=list(self.snapshot.get('software',[]))
+            if not any(row.get('kind')=='dots-panel' for row in rows):rows.insert(0,{'id':'current-viewer','name':'dots-panel','description':self.t('此窗口正在运行'),'kind':'dots-panel','version':VERSION,'available':True,'controls':['close_current_viewer']})
+            return rows
+        def model(record):
+            key=record.get('id',record['name']);available=record.get('available');state=self.t('可用' if available is True else '未检测到' if available is False else '未验证');expanded=key in getattr(self,'expanded_software',set())
+            actions=[('details',('Less ⌃' if en else '收起 ⌃') if expanded else ('Details ⌄' if en else '详情 ⌄'),lambda key=key:self.toggle_registry_detail('software',key))];details=[]
             if expanded:
-                for label,value in (("Description" if en else "简介",record.get("description")),("Kind" if en else "类型",record.get("kind")),("Availability" if en else "可用性",state),("Version" if en else "版本",record.get("version")),("Checked" if en else "检测时间",observation_label(record.get("verified_at"),self.language,self.timezone))):
-                    self.label(box,label+": "+str(value or "—"),14,self.muted,raw=True,wrap=800).pack(anchor="w",pady=3)
-                self.label(box,"Detected availability is not proof of a running service" if en else "检测到可用不代表服务正在运行",14,self.muted,raw=True,wrap=800).pack(anchor="w",pady=4)
-                if "close_current_viewer" in record.get("controls",[]) and record.get("kind")=="dots-panel":
-                    self.filter_chip(box,self.t("关闭此窗口"),self.close_viewer).pack(anchor="w",pady=(5,0))
-                else:
-                    self.label(box,"No launch/stop controls are connected" if en else "未接入启动或停止控制",14,self.muted,raw=True).pack(anchor="w",pady=4)
+                for field,label,value in [('description','Description' if en else '简介',record.get('description')),('kind','Kind' if en else '类型',record.get('kind')),('available','Availability' if en else '可用性',state),('version','Version' if en else '版本',record.get('version')),('checked','Checked' if en else '检测时间',observation_label(record.get('verified_at'),self.language,self.timezone))]:details.append((field,label+': '+str(value or '—')))
+                details.append(('boundary','Detected availability is not proof of a running service' if en else '检测到可用不代表服务正在运行'))
+                if 'close_current_viewer' in record.get('controls',[]) and record.get('kind')=='dots-panel':actions.append(('close',self.t('关闭此窗口'),self.close_viewer))
+                else:details.append(('controls','No launch/stop controls are connected' if en else '未接入启动或停止控制'))
+            return {'title':record['name'],'summary':str(record.get('version') or '—'),'status':state,'details':details,'actions':actions}
+        self.keyed_registry(area,records,model,minimum=285,maximum=3)
 
-
-    def render_install_doctor(self, area, report):
-        en = self.language == "en"
-        section = self.tk.Frame(area, bg=self.panel, padx=12, pady=10)
-        section.pack(fill="x", pady=(0, 12))
-        self.label(section, "Installation checks · read-only" if en else "安装自检 · 只读", 16, self.fg, True, raw=True).pack(anchor="w")
-        local, manual = doctor_rows(report, self.language)
-        passed = sum(row["status"] == "ok" for row in report.get("checks", []))
-        summary = (f"Local checks: {passed}/{len(local)} OK · permission probes only" if en else f"本机检查：{passed}/{len(local)} 通过 · 仅探测权限") if local else ("No diagnostics available" if en else "尚未运行检查")
-        self.label(section, summary, 14, self.muted, raw=True).pack(anchor="w", pady=(4, 5))
-        for title, value in manual:
-            self.label(section, title + " · " + value, 14, self.muted, raw=True).pack(anchor="w", pady=2)
-        def toggle():
-            self.doctor_expanded = not getattr(self, "doctor_expanded", False)
-            self.render_page()
-        self.filter_chip(section, ("Less ⌃" if en else "收起 ⌃") if getattr(self, "doctor_expanded", False) else ("Local check details ⌄" if en else "本机检查详情 ⌄"), toggle).pack(anchor="w", pady=(6, 3))
-        if getattr(self, "doctor_expanded", False):
-            for title, value in local:
-                self.label(section, title + " · " + value, 14, self.muted, raw=True).pack(anchor="w", pady=2)
-            for component, observation in report.get("observations", {}).items():
-                if observation.get("evidence"):
-                    when = self.stamp(observation["observed_at"]) if observation.get("observed_at") is not None else "—"
-                    self.label(section, when + " · " + observation["evidence"], 11, self.muted, raw=True, wrap=800).pack(anchor="w", pady=2)
-        self.label(section, "No account scan, installation or scheduling; source availability does not verify account setup" if en else "不扫描账户、不安装、不创建定时器；源码可用不等于账户已配置", 11, self.muted, raw=True, wrap=800).pack(anchor="w", pady=(5, 0))
+    def render_install_doctor(self,area,report):
+        en=self.language=='en';section=self.tk.Frame(area,bg=self.panel,padx=12,pady=10);section.pack(fill='x',pady=(0,12))
+        self.label(section,'Installation checks · read-only' if en else '安装自检 · 只读',16,self.fg,True,raw=True).pack(anchor='w')
+        summary=self.label(section,'',14,self.muted,raw=True);summary.pack(anchor='w',pady=(4,5))
+        facts=self.tk.Frame(section,bg=self.panel);facts.pack(fill='x');update_facts=self.keyed_labels(facts)
+        def toggle():self.doctor_expanded=not getattr(self,'doctor_expanded',False);self.render_page()
+        self.filter_chip(section,('Less ⌃' if en else '收起 ⌃') if getattr(self,'doctor_expanded',False) else ('Local check details ⌄' if en else '本机检查详情 ⌄'),toggle).pack(anchor='w',pady=(6,3))
+        details=self.tk.Frame(section,bg=self.panel);details.pack(fill='x');update_details=self.keyed_labels(details)
+        self.label(section,'No account scan, installation or scheduling; source availability does not verify account setup' if en else '不扫描账户、不安装、不创建定时器；源码可用不等于账户已配置',11,self.muted,raw=True,wrap=800).pack(anchor='w',pady=(5,0))
+        saved={}
+        def refresh(report):
+            local,manual=doctor_rows(report,self.language);passed=sum(row['status']=='ok' for row in report.get('checks',[]))
+            caption=(f'Local checks: {passed}/{len(local)} OK · permission probes only' if en else f'本机检查：{passed}/{len(local)} 通过 · 仅探测权限') if local else ('No diagnostics available' if en else '尚未运行检查')
+            if caption!=saved.get('summary'):summary.configure(text=caption);saved['summary']=caption
+            update_facts([(title,title+' · '+value) for title,value in manual])
+            rows=[]
+            if getattr(self,'doctor_expanded',False):
+                rows=[(title,title+' · '+value) for title,value in local]
+                for component,observation in report.get('observations',{}).items():
+                    if observation.get('evidence'):rows.append(('evidence:'+component,self.stamp(observation['observed_at'])+' · '+observation['evidence']))
+            update_details(rows)
+        refresh(report);return refresh
 
     def render_about(self):
-        area = self.scroll_area()
-        en = self.language == "en"
-        about = self.snapshot.get("about", {})
-        release = about.get("release", {})
-        labels = {"unknown": ("未核验", "Not checked"), "unpublished": ("未发布", "Unpublished"), "published": ("已发布", "Published"),
-                  "matched": ("已核验一致", "Verified matching"), "different": ("已核验不同", "Verified different"), "local_changes": ("有本地更改", "Local changes")}
-        def state_label(value):
-            return labels.get(value, labels["unknown"])[1 if en else 0]
-        rows = [("Installed version" if en else "当前安装版本", about.get("installed_version", VERSION)),
-                ("Published release" if en else "已发布版本", state_label(release.get("release_status", "unknown")) + (" · " + release["release_tag"] if release.get("release_tag") else "")),
-                ("Source synchronization" if en else "源码同步状态", state_label(release.get("sync_status", "unknown"))),
-                ("Verified remote commit" if en else "已核验远端提交", release.get("remote_commit") or "—"),
-                ("Last checked" if en else "最近核验", self.stamp(release["checked_at"]) if release.get("checked_at") else ("Not checked" if en else "尚未核验"))]
-        for title, value in rows:
-            row = self.tk.Frame(area, bg=self.panel, highlightthickness=1, highlightbackground="#e3ebe1", padx=13, pady=11)
-            row.pack(fill="x", pady=(0, 6))
-            self.label(row, title, 15, self.muted, raw=True).pack(side="left", padx=(0, 25))
-            value_label = self.label(row, value, 15, self.fg, raw=True, wrap=620)
-            value_label.pack(side="left", fill="x", expand=True)
-            row.bind("<Configure>", lambda event, label=value_label: label.configure(wraplength=max(150, event.width-200)))
-        try:
-            url = verified_repository_url(release.get("repo_url"))
-        except ValueError:
-            url = None
-        if url:
-            def open_repository():
+        area=self.scroll_area();en=self.language=='en';values={};value_labels={}
+        labels={'unknown':('未核验','Not checked'),'unpublished':('未发布','Unpublished'),'published':('已发布','Published'),'matched':('已核验一致','Verified matching'),'different':('已核验不同','Verified different'),'local_changes':('有本地更改','Local changes')}
+        titles=[('installed','Installed version' if en else '当前安装版本'),('release','Published release' if en else '已发布版本'),('sync','Source synchronization' if en else '源码同步状态'),('commit','Verified remote commit' if en else '已核验远端提交'),('checked','Last checked' if en else '最近核验')]
+        for key,title in titles:
+            row=self.tk.Frame(area,bg=self.panel,highlightthickness=1,highlightbackground='#e3ebe1',padx=13,pady=11);row.pack(fill='x',pady=(0,6))
+            self.label(row,title,15,self.muted,raw=True).pack(side='left',padx=(0,25));value_labels[key]=self.label(row,'',15,self.fg,raw=True,wrap=620);value_labels[key].pack(side='left',fill='x',expand=True)
+            row.bind('<Configure>',lambda event,label=value_labels[key]:label.configure(wraplength=max(150,event.width-200)))
+        link_state={'url':None}
+        def open_repository():
+            if link_state['url']:
                 import webbrowser
-                webbrowser.open(url)
-            self.filter_chip(area, "GitHub project ↗" if en else "GitHub 项目 ↗", open_repository).pack(anchor="w", pady=(7, 4))
-            self.label(area, url, 14, self.muted, raw=True).pack(anchor="w", pady=(0, 9))
-        else:
-            self.label(area, "No verified GitHub project configured" if en else "尚未登记已核验的 GitHub 项目", 14, self.muted, raw=True).pack(anchor="w", pady=8)
-        self.render_install_doctor(area, about.get("doctor", {}))
-        self.label(area, "Installation notes" if en else "本安装更新说明", 17, bold=True, raw=True).pack(anchor="w", pady=(12, 7))
-        for item in about.get("install_notes", []):
-            self.label(area, "• "+item.get("en" if en else "zh", ""), 15, self.muted, raw=True, wrap=800).pack(anchor="w", pady=4)
-        note = "Local version is not remote release status. These are manually verified observations, not live checks. This page does not update, publish, or use credentials." if en else "本地版本不等于远端发布状态。此处是人工核验记录，不是实时查询；本页不更新安装、不发布代码、不使用凭据。"
-        self.label(area, note, 14, self.muted, raw=True, wrap=800).pack(anchor="w", pady=(15, 5))
-
+                webbrowser.open(link_state['url'])
+        link=self.filter_chip(area,'GitHub project ↗' if en else 'GitHub 项目 ↗',open_repository);link.pack(anchor='w',pady=(7,4))
+        link_label=self.label(area,'',14,self.muted,raw=True);link_label.pack(anchor='w',pady=(0,9))
+        refresh_doctor=self.render_install_doctor(area,self.snapshot.get('about',{}).get('doctor',{}))
+        self.label(area,'Installation notes' if en else '本安装更新说明',17,bold=True,raw=True).pack(anchor='w',pady=(12,7))
+        notes=self.tk.Frame(area,bg=self.bg);notes.pack(fill='x');update_notes=self.keyed_labels(notes)
+        self.label(area,'Local version is not remote release status. Manually verified observations; no live update or publication.' if en else '本地版本不等于远端发布状态；这里只读展示人工核验记录，不更新安装或发布。',14,self.muted,raw=True,wrap=800).pack(anchor='w',pady=(15,5))
+        def refresh():
+            about=self.snapshot.get('about',{});release=about.get('release',{});state=lambda key:labels.get(key,labels['unknown'])[1 if en else 0]
+            current={'installed':about.get('installed_version',VERSION),'release':state(release.get('release_status'))+(' · '+release['release_tag'] if release.get('release_tag') else ''),'sync':state(release.get('sync_status')),'commit':release.get('remote_commit') or '—','checked':self.stamp(release['checked_at']) if release.get('checked_at') else ('Not checked' if en else '尚未核验')}
+            for key,value in current.items():
+                if values.get(key)!=value:value_labels[key].configure(text=value)
+            values.update(current)
+            try:url=verified_repository_url(release.get('repo_url'))
+            except ValueError:url=None
+            if url!=link_state['url'] or 'link' not in values:
+                link_state['url']=url;values['link']=url;link_label.configure(text=url or ('No verified GitHub project configured' if en else '尚未登记已核验的 GitHub 项目'))
+                if url:link.pack(anchor='w',pady=(7,4),before=link_label)
+                else:link.pack_forget()
+            refresh_doctor(about.get('doctor',{}));update_notes([(str(i),'• '+row.get('en' if en else 'zh','')) for i,row in enumerate(about.get('install_notes',[]))])
+        refresh();self.background_refresh=refresh
 
     def render_rules(self):
-        area = self.scroll_area()
-        en = self.language == "en"
-        language = "en" if en else "zh"
-        data = self.snapshot.get("rules", {})
-        levels = {"enforced": ("程序校验", "App enforced"), "workflow": ("执行约定", "Workflow"), "planned": ("待落地", "Planned")}
-        self.label(area, ("Rules version · " if en else "规则版本 · ") + data.get("version", "—"), 14, self.accent, raw=True).pack(anchor="w", pady=(0, 6))
-        note = "App enforced: checked by existing panel operations. Workflow: followed by the executor. Planned: not implemented. These guidelines do not grant permissions." if en else "程序校验：现有面板操作已实施检查；执行约定：由执行者遵循；待落地：尚未实现。规则本身不授予权限。"
-        self.label(area, note, 14, self.muted, raw=True, wrap=830).pack(anchor="w", pady=(0, 12))
-        self.label(area, "Your installed Skills" if en else "用户安装的 Skills", 16, self.fg, True, raw=True).pack(anchor="w", pady=(0, 4))
-        self.label(area, "Manually recorded summaries · no automatic sync or guaranteed activation" if en else "人工登记的用途摘要 · 不自动同步，不保证每次触发", 14, self.muted, raw=True, wrap=830).pack(anchor="w", pady=(0, 8))
-        skills = [item for item in data.get("skills", []) if item.get("scope") == "user_installed"]
-        grid = self.card_grid(area, minimum=300, maximum=3)
-        for item in skills:
-            key = item.get("id", item["name"])
-            source = item.get("source", {})
-            box = self.compact_row(grid, agent_text(item, "name", language), agent_text(item, "purpose", language), skill_status_label(item.get("status"), language))
-            expanded = key in getattr(self, "expanded_skills", set())
-            self.filter_chip(box, ("Less ⌃" if en else "收起 ⌃") if expanded else ("Details ⌄" if en else "详情 ⌄"), lambda key=key: self.toggle_registry_detail("skills", key)).pack(anchor="w", pady=(12, 0))
+        area=self.scroll_area();en=self.language=='en';language='en' if en else 'zh'
+        version=self.label(area,'',14,self.accent,raw=True);version.pack(anchor='w',pady=(0,6))
+        self.label(area,'App enforced, executor workflow, or planned; these guidelines do not grant permissions.' if en else '程序校验、执行约定或待落地；规则本身不授予权限。',14,self.muted,raw=True,wrap=830).pack(anchor='w',pady=(0,12))
+        self.label(area,'Your installed Skills' if en else '用户安装的 Skills',16,self.fg,True,raw=True).pack(anchor='w',pady=(0,4))
+        self.label(area,'Manually recorded summaries · no automatic sync or guaranteed activation' if en else '人工登记的用途摘要 · 不自动同步，不保证每次触发',14,self.muted,raw=True,wrap=830).pack(anchor='w',pady=(0,8))
+        skill_area=self.tk.Frame(area,bg=self.bg);skill_area.pack(fill='x')
+        def skill_model(item):
+            key=item.get('id',item['name']);source=item.get('source',{});expanded=key in getattr(self,'expanded_skills',set());details=[]
+            actions=[('details',('Less ⌃' if en else '收起 ⌃') if expanded else ('Details ⌄' if en else '详情 ⌄'),lambda key=key:self.toggle_registry_detail('skills',key))]
             if expanded:
-                self.label(box, skill_origin_label(source.get("origin"), language)+" · "+skill_publication_label(source.get("publication"), language), 14, self.muted, raw=True).pack(anchor="w", fill="x", pady=(8, 0))
-                self.label(box, ("When: " if en else "使用场景：") + agent_text(item, "when_used", language), 15, self.fg, raw=True).pack(anchor="w", fill="x", pady=(8, 0))
-                observation = ("Manual observation · " if en else "人工观察 · ") + self.stamp(item.get("observed_at")) + " · " + skill_version_label(item.get("version_status"), language)
-                self.label(box, observation, 14, self.muted, raw=True).pack(anchor="w", fill="x", pady=(8, 0))
-                if item.get("version_note") or item.get("version_note_en"):
-                    self.label(box, agent_text(item, "version_note", language), 14, self.muted, raw=True).pack(anchor="w", fill="x")
-                try:
-                    url = verified_skill_url(item.get("url"))
-                except ValueError:
-                    url = None
+                details=[('origin',skill_origin_label(source.get('origin'),language)+' · '+skill_publication_label(source.get('publication'),language)),('when',('When: ' if en else '使用场景：')+agent_text(item,'when_used',language)),('observed',('Manual observation · ' if en else '人工观察 · ')+self.stamp(item.get('observed_at'))+' · '+skill_version_label(item.get('version_status'),language))]
+                if item.get('version_note') or item.get('version_note_en'):details.append(('version',agent_text(item,'version_note',language)))
+                try:url=verified_skill_url(item.get('url'))
+                except ValueError:url=None
                 if url:
-                    def open_skill(target=url):
+                    def open_skill(url=url):
                         import webbrowser
-                        webbrowser.open(target)
-                    self.filter_chip(box, "Manage ↗" if en else "管理 ↗", open_skill).pack(anchor="w", pady=(8, 0))
-        if not skills:
-            self.label(area, "No user Skills registered" if en else "尚未登记用户 Skills", 14, self.muted, raw=True).pack(anchor="w", pady=(0, 8))
-        # Preserve old explicit links without inventing a catalog record from them.
-        if not any(item.get("url") == data.get("skill_url") for item in skills):
-            try:
-                legacy_url = verified_skill_url(data.get("skill_url"))
-            except ValueError:
-                legacy_url = None
-            if legacy_url:
-                def open_legacy_skill(target=legacy_url):
-                    import webbrowser
-                    webbrowser.open(target)
-                self.filter_chip(area, "Task skill ↗" if en else "任务 Skill ↗", open_legacy_skill).pack(anchor="w", pady=(0, 8))
-        self.label(area, "Project guidelines" if en else "项目规范", 16, self.fg, True, raw=True).pack(anchor="w", pady=(8, 8))
-        for group in data.get("groups", []):
-            box = self.tk.Frame(area, bg=self.panel, highlightthickness=1, highlightbackground="#e3ebe1", padx=12, pady=9)
-            box.pack(fill="x", pady=(0, 8))
-            body = self.tk.Frame(box, bg=self.panel)
-            caption = group["title"][language]
-            key = group.get("id", caption)
-            expanded = key in getattr(self, "expanded_rule_groups", set())
-            self.filter_chip(box, caption + ("  ⌃" if expanded else "  ⌄"), lambda key=key: self.toggle_registry_detail("rule_groups", key)).pack(anchor="w")
-            self.label(box, (str(len(group["items"])) + (" guidelines" if en else " 条规范")), 13, self.muted, raw=True).pack(anchor="w", pady=(4, 0))
-            if expanded:
-                body.pack(fill="x", pady=(8, 0))
-            for rule in group["items"]:
-                level = levels.get(rule["level"], levels["planned"])[1 if en else 0]
-                self.label(body, level + " · " + rule["title"][language], 14, self.accent, True, raw=True).pack(anchor="w", pady=(9, 3))
-                self.label(body, rule["body"][language], 15, self.fg, raw=True, wrap=810).pack(anchor="w", pady=(0, 7))
-        self.label(area, "Source: packaged project_rules.json · read-only" if en else "统一来源：项目 project_rules.json · 只读展示", 14, self.muted, raw=True).pack(anchor="w", pady=10)
+                        webbrowser.open(url)
+                    actions.append(('manage','Manage ↗' if en else '管理 ↗',open_skill))
+            return {'title':agent_text(item,'name',language),'summary':agent_text(item,'purpose',language),'status':skill_status_label(item.get('status'),language),'details':details,'actions':actions}
+        refresh_skills=self.keyed_registry(skill_area,lambda:[r for r in self.snapshot.get('rules',{}).get('skills',[]) if r.get('scope')=='user_installed'],skill_model,minimum=300,maximum=3)
+        legacy_holder={'url':None}
+        def open_legacy():
+            if legacy_holder['url']:
+                import webbrowser
+                webbrowser.open(legacy_holder['url'])
+        legacy=self.filter_chip(area,'Task skill ↗' if en else '任务 Skill ↗',open_legacy)
+        self.label(area,'Project guidelines' if en else '项目规范',16,self.fg,True,raw=True).pack(anchor='w',pady=(8,8))
+        groups_area=self.tk.Frame(area,bg=self.bg);groups_area.pack(fill='x');groups={};previous={}
+        levels={'enforced':('程序校验','App enforced'),'workflow':('执行约定','Workflow'),'planned':('待落地','Planned')}
+        self.label(area,'Source: packaged project_rules.json · read-only' if en else '统一来源：项目 project_rules.json · 只读展示',14,self.muted,raw=True).pack(anchor='w',pady=10)
+        state={}
+        def refresh():
+            data=self.snapshot.get('rules',{});caption=('Rules version · ' if en else '规则版本 · ')+data.get('version','—')
+            if state.get('version')!=caption:version.configure(text=caption);state['version']=caption
+            refresh_skills()
+            try:url=verified_skill_url(data.get('skill_url'))
+            except ValueError:url=None
+            if any(item.get('url')==url for item in data.get('skills',[])):url=None
+            if url!=legacy_holder['url']:
+                legacy_holder['url']=url
+                if url:legacy.pack(anchor='w',pady=(0,8),before=groups_area)
+                else:legacy.pack_forget()
+            wanted=[g.get('id',g['title'][language]) for g in data.get('groups',[])]
+            for key in list(groups):
+                if key not in wanted:groups.pop(key)['box'].destroy();previous.pop(key,None)
+            for group,key in zip(data.get('groups',[]),wanted):
+                expanded=key in getattr(self,'expanded_rule_groups',set());caption=group['title'][language]+('  ⌃' if expanded else '  ⌄')
+                if key not in groups:
+                    box=self.tk.Frame(groups_area,bg=self.panel,highlightthickness=1,highlightbackground='#e3ebe1',padx=12,pady=9);box.pack(fill='x',pady=(0,8))
+                    button=self.filter_chip(box,caption,lambda key=key:self.toggle_registry_detail('rule_groups',key));button.pack(anchor='w')
+                    count=self.label(box,'',13,self.muted,raw=True);count.pack(anchor='w',pady=(4,0));body=self.tk.Frame(box,bg=self.panel)
+                    if expanded:body.pack(fill='x',pady=(8,0))
+                    groups[key]={'box':box,'button':button,'count':count,'labels':self.keyed_labels(body)}
+                item=groups[key];self.patch_caption(item['button'],caption)
+                count=str(len(group['items']))+(' guidelines' if en else ' 条规范')
+                if previous.get(key)!=count:item['count'].configure(text=count);previous[key]=count
+                item['labels']([(rule.get('id',str(i)),levels.get(rule['level'],levels['planned'])[1 if en else 0]+' · '+rule['title'][language]+'\n'+rule['body'][language]) for i,rule in enumerate(group['items'])])
+        refresh();self.background_refresh=refresh
 
     def close_viewer(self):
         from tkinter import messagebox
-        if messagebox.askyesno(self.t("确认关闭此窗口？"), self.t("只关闭当前看板窗口，不会停止任务、定时任务或其他服务。可从桌面启动器重新打开。"), parent=self.root):
+        if messagebox.askyesno(self.t("确认关闭此窗口？"), self.t("只关闭当前看板窗口，不会停止任务、自动化或其他服务。可从桌面启动器重新打开。"), parent=self.root):
             if self.timer:
                 self.root.after_cancel(self.timer)
             if getattr(self, "notifications", None) is not None:
@@ -2111,6 +2653,7 @@ class Dashboard:
 def main():
     parser = argparse.ArgumentParser(description="Read-only native dots-panel viewer (no HTTP)")
     parser.add_argument("--data-dir", type=Path, default=default_data_dir())
+    parser.add_argument("--layout-diagnostics", action="store_true", help="Log public Tk geometry for task-detail layout diagnosis")
     parser.add_argument("--font-diagnostics", action="store_true", help="Report local Tk font selection and exit")
     parser.add_argument("--language", choices=("auto", "zh", "en"), default=None, help="UI language; Auto follows LC_ALL, LC_MESSAGES, then LANG")
     args = parser.parse_args()
@@ -2131,7 +2674,8 @@ def main():
             root.destroy()
             return 0
         store = ReadOnlyStore(args.data_dir)
-        Dashboard(root, store, Metrics(store.directory), tk, ttk, args.language or load_language(store.directory))
+        view=Dashboard(root, store, Metrics(store.directory), tk, ttk, args.language or load_language(store.directory))
+        view.layout_diagnostics=args.layout_diagnostics
         root.mainloop()
     except (OSError, sqlite3.Error, tk.TclError) as error:
         print(f"Native viewer unavailable: {error}", file=sys.stderr)

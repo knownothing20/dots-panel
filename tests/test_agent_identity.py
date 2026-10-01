@@ -5,7 +5,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from dots_panel.app import Store
 from dots_panel.agent_identity import PORTRAITS, portrait_spec, draw_portrait, identity_label
 from dots_panel.desktop_view import Dashboard, ReadOnlyStore
@@ -137,15 +137,17 @@ class AgentIdentityTests(unittest.TestCase):
     def test_native_agents_render_fixed_avatar_and_separate_current_work(self):
         view=Dashboard.__new__(Dashboard);view.language='en';view.timezone='UTC';view.muted='gray';view.fg='black'
         view.scroll_area=Mock();view.label=Mock();view.card_grid=Mock();view.compact_row=Mock();view.selected_agent=None;view.tk=Mock();view.root=Mock();view.filter_chip=Mock();view.bg='white';view.t=lambda x:x;view.show_agent_history=True
-        view.snapshot={'agents':[{'id':'one','name':'Qingya','status':'running','observed_at':1,'portrait':'wave-teal','identity_verification':'historical'}],'tasks':[{'id':'task','name':'Original work'}],'runs':[{'id':'run','task_id':'task','status':'running'}],'agent_run_assignments':[{'run_id':'run','agent_id':'one','work_type':'review'}]}
-        view.detail_meta=True;view.render_task_participants(Mock(),'task');call=view.compact_row.call_args
-        self.assertEqual(call.kwargs['avatar']['id'],'one');self.assertTrue(call.args[1].startswith('Panel ID '))
-        self.assertIn('Review',call.args[2])
+        view.snapshot={'agents':[{'id':'one','name':'Qingya','status':'running','observed_at':1,'portrait':'wave-teal','identity_verification':'historical'}],'tasks':[{'id':'task','name':'Original work'}],'runs':[{'id':'run','task_id':'task','status':'running'}],'agent_run_assignments':[{'run_id':'run','agent_id':'one','work_type':'review','assigned_at':1}]}
+        view.detail_meta=True
+        with patch('dots_panel.desktop_view.draw_portrait') as draw:
+            view.render_task_participants(Mock(),'task')
+        self.assertEqual(draw.call_args.args[1]['id'],'one')
+        labels=[call.args[1] for call in view.label.call_args_list]
+        self.assertTrue(any(label.startswith('Panel ID ') and 'Review' in label for label in labels))
         agent=view.snapshot['agents'][0]
         agent.update(identity_source='manual',identity_observed_at=946684800,observed_at=1609459200)
-        view.compact_row.reset_mock();view.render_task_participants(Mock(),'task');summary=view.compact_row.call_args_list[0].args[2]
-        identity_line=next(line for line in summary.splitlines() if 'Identity checked at' in line)
-        status_line=view.compact_row.call_args_list[0].args[3]
-        self.assertIn('2000-01-01',identity_line);self.assertNotIn('2021-01-01',identity_line)
-        self.assertIn('2021-01-01',status_line);self.assertNotIn('2000-01-01',status_line)
-
+        view.label.reset_mock();view.render_task_participants(Mock(),'task')
+        labels=[call.args[1] for call in view.label.call_args_list]
+        evidence=next(label for label in labels if 'Identity checked at' in label)
+        self.assertIn('2000-01-01',evidence);self.assertIn('2021-01-01',evidence)
+        self.assertLess(evidence.index('2000-01-01'),evidence.index('2021-01-01'))

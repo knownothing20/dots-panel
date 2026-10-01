@@ -162,3 +162,78 @@ button,select{min-height:40px}.nav{color:#596d60;font-size:15px}.nav-label,.eyeb
 .task-card-top .participant-avatar-group{margin-left:auto;margin-right:10px;display:flex;align-items:center;border:0;background:transparent;padding:0;flex-shrink:0;cursor:pointer}.participant-avatar-group .agent-avatar{width:28px;height:28px;padding:0;margin-left:-4px;flex-shrink:0}.participant-avatar-group .agent-avatar:first-child{margin-left:0}.participant-overflow{font-size:12px;margin-left:4px;color:#536b58}.participant-avatar-group:focus-visible{outline:2px solid #258560;outline-offset:4px}.task-participants{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;padding:12px 0}.task-participants>h3{grid-column:1/-1;margin:0}.activity-participant{border:1px solid #e0e9dd;border-radius:12px;padding:12px;min-width:0}.activity-participant .agent-avatar{width:34px;height:34px}.activity-participant .agent-heading{gap:8px;align-items:center}.activity-participant p{margin:6px 0;font-size:13px}.activity-participant small,.participant-details{font-size:12px;color:#657368}.participant-details{margin-top:7px}
 
 .participant-avatar-group[hidden]{display:none}
+
+/* Collaboration reading surface: compact header, explicit historical authors. */
+#detail-header .detail-heading{display:flex;flex-wrap:nowrap;align-items:center;gap:8px;margin:2px 0;min-height:42px}
+#detail-header .detail-heading h2{font-size:21px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0}
+#detail-header .detail-heading button{min-height:34px;padding:6px 10px;white-space:nowrap;flex-shrink:0}
+#detail-avatars .participant-avatar-group{display:flex;align-items:center;border:0;background:transparent;padding:2px;min-height:30px}
+#detail-avatars .agent-avatar{width:28px;height:28px;padding:0;margin-left:-5px}#detail-avatars .agent-avatar:first-child{margin-left:0}
+.detail-secondary{display:flex;justify-content:space-between;align-items:center;gap:12px;padding-top:8px;max-height:60px;overflow:hidden}
+#detail-mode{font-size:12px;color:#607466}.detail-secondary .detail-tabs{margin:0}.is-compact .detail-secondary{display:none}
+#detail-more{background:#f0f4eb;border-radius:12px;padding:10px 14px}#detail-more>summary{cursor:pointer}
+.task-participants{display:block;padding:6px 0}.task-participants>h3{font-size:14px;margin:8px 0}.activity-participant{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border:0;border-bottom:1px solid #dfe7dd;border-radius:0}.activity-participant .agent-avatar{width:26px;height:26px}.activity-participant .agent-heading{font-size:13px}.activity-participant small{font-size:12px}
+.collaboration-filters{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}.collaboration-filters label{display:flex;align-items:center;gap:6px;font-size:12px;color:#5c7062}.collaboration-filters select,#collaboration-mode-filter{font:inherit;font-size:13px;background:#fffef8;border:1px solid #dbe5d8;border-radius:9px;padding:7px 9px;max-width:240px;min-height:34px}
+#project-activity{padding:0}.conversation-message{background:var(--actor-tint,#f3f4ef);border:1px solid #dfe7df;border-radius:15px;padding:15px 18px;margin:0 0 12px}.message-author{display:flex;align-items:center;gap:10px}.message-author .agent-avatar,.unattributed-avatar{width:36px;height:36px;padding:0;flex-shrink:0}.unattributed-avatar{display:grid;place-items:center;border-radius:50%;background:#e5e8df;color:#6e796c}.message-identity{min-width:0;flex:1}.message-identity strong{display:block;font-size:14px;color:#304c3b}.message-identity small{display:block;font-size:11px;margin:0}.message-author time{font-size:11px;color:#64756a;max-width:40%;line-height:1.5}.message-context{display:block;margin:8px 0 0!important;color:#637366}.message-body{white-space:pre-wrap;overflow-wrap:anywhere;margin:7px 0 0;font-size:15px;line-height:1.75;color:#2f493a}.conversation-pagination{display:flex;align-items:center;justify-content:center;gap:12px;margin:14px 0;font-size:13px}.conversation-pagination[hidden]{display:none}.conversation-pagination button{min-height:34px}.activity-search{display:flex;gap:8px}.activity-toolbar{grid-template-columns:minmax(0,1fr) minmax(220px,350px)}
+.collaboration-filters select:focus-visible,#detail-header button:focus-visible{outline:2px solid #258560;outline-offset:2px}
+@media(max-width:850px){#detail-header .detail-heading h2{font-size:17px}#detail-more-toggle{max-width:58px;overflow:hidden}#detail-avatars .agent-avatar{width:23px;height:23px}#detail-header .status{max-width:100px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.activity-toolbar{grid-template-columns:1fr}.activity-search{justify-content:flex-end}.message-author time{max-width:35%}}
+@media(prefers-reduced-motion:reduce){#detail-header,.conversation-message{transition:none!important}}
+
+.collaboration-filters [hidden]{display:none!important}.activity-participant{flex-wrap:wrap}.activity-participant .participant-details{flex-basis:100%;margin-top:0}
+
+/* Task-first detail chrome and collapsed, lightweight filtering. */
+.task-detail-open main>header,.task-detail-open #page-conversations>.intro{display:none!important}
+.task-detail-open #page-conversations{padding-top:0}.task-detail-open #detail-header{padding:8px 0}
+.task-detail-open #detail-header .detail-secondary{display:none}
+.task-detail-open #detail-header .detail-heading{min-height:36px}
+.task-mode-tag{display:inline-flex;width:fit-content;border-radius:999px;padding:3px 9px;background:#edf2e8;color:#627363;font-size:11px;margin:0 0 7px}
+.task-origin{display:block;font-size:11px;color:#657568;margin:4px 0}
+.filter-disclosure-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0 12px}
+#conversation-filters-toggle,.applied-filter{border:0;border-radius:999px;padding:6px 11px;min-height:30px;background:#edf2e8;color:#5c7061;font:inherit;font-size:12px;cursor:pointer}
+#conversation-filter-chips{display:flex;gap:6px;flex-wrap:wrap}.applied-filter{background:#e2eee3;color:#41684c}
+.collaboration-filters[hidden]{display:none!important}.collaboration-filters select{border:0;border-radius:999px;background:#f1f5ed;padding:7px 13px}
+.anonymous-avatar{position:relative;overflow:hidden;background:#e5e8e2;border-radius:50%}
+.anonymous-head{position:absolute;top:7px;left:13px;width:10px;height:10px;border-radius:50%;background:#9ca79c}
+.anonymous-shoulders{position:absolute;top:20px;left:8px;width:20px;height:15px;border-radius:12px 12px 4px 4px;background:#9ca79c}
+
+.task-card-top .participant-avatar-group[hidden]+.status{margin-left:auto}
+
+/* Bounded task summaries: title, independent avatar/status row, two-line summary, outputs. */
+.task-grid .task-card{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:46px 30px 42px 18px 34px;gap:6px 8px;height:232px;min-height:0;max-height:232px;padding:16px;overflow:hidden;align-content:start}
+.task-grid .task-card>h2{grid-column:1/-1;grid-row:1;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;overflow-wrap:anywhere;font-size:18px;line-height:23px;max-height:46px;margin:0}
+.task-grid .task-card>.task-card-top{grid-column:1/-1;grid-row:2;display:flex;align-items:center;margin:0;gap:7px;min-width:0}
+.task-grid .task-card>.task-card-top>.task-mode-tag{min-width:0;max-width:110px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0;padding:2px 7px;font-size:10px;line-height:16px}
+.task-grid .task-card>.task-card-top>.status{flex-shrink:0;max-width:105px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;padding:5px 7px}
+.task-grid .task-card>.task-card-top>.participant-avatar-group{gap:0;margin-right:0;flex-shrink:0}
+.task-grid .task-card>.task-summary{grid-column:1/-1;grid-row:3;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;max-height:42px;overflow:hidden;overflow-wrap:anywhere;font-size:14px;line-height:21px;margin:0}
+.task-grid .task-card>.task-progress{grid-column:1/-1;grid-row:4;display:flex;align-items:center;gap:7px;min-height:0;max-height:18px;margin:0;overflow:hidden}
+.task-grid .task-card>.task-progress small{margin:0;font-size:11px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.task-grid .task-card>.task-progress progress{width:62px;height:4px;flex-shrink:0;margin:0}
+.task-grid .task-card>.task-outputs{grid-column:1;grid-row:5;min-width:0;display:flex;align-items:center;padding:0;margin:0;border:0;background:none;overflow:hidden}
+.task-grid .task-card>.task-outputs .output-count{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px}
+.task-grid .task-card>.task-card-actions{grid-column:2;grid-row:5;display:flex;align-items:center;justify-content:flex-end;gap:5px;margin:0;padding:0;min-width:0}
+.task-grid .task-card>.task-card-actions button{font-size:12px;padding:5px 9px;min-height:30px;white-space:nowrap}
+@media(max-width:380px){.task-grid .task-card{padding:12px;gap:6px;height:224px;max-height:224px}.task-grid .task-card>.task-card-actions button{padding:5px 7px}.task-grid .task-card>.task-card-top>.task-mode-tag{max-width:80px}}
+
+/* Compact task controls: primary states, native collapsed menus, search on right. */
+.activity-toolbar{grid-template-columns:minmax(0,1fr) auto minmax(120px,210px);gap:8px}
+.activity-toolbar #activity-tabs{scrollbar-gutter:auto;gap:4px}
+.activity-toolbar #activity-tabs .filter-chip,.activity-toolbar .more-status-filter,.activity-toolbar #collaboration-mode-filter{font-size:12px;min-height:32px;padding:6px 9px;border-radius:999px;white-space:nowrap}
+.activity-toolbar #collaboration-mode-filter{max-width:135px;border:1px solid #dce6d8;background:#edf3e9;color:#46614c}
+.activity-toolbar .more-status-filter{max-width:132px}
+.activity-toolbar #workspace-search{font-size:13px;padding:7px 10px;border-radius:999px;height:32px}
+.recovery-info{margin:0 0 8px;color:#72806c;font-size:12px}
+.recovery-info>summary{cursor:pointer;width:fit-content;list-style:none;border-radius:999px;padding:4px 9px;background:#eef2e9}
+.recovery-info .recovery-notice{margin:8px 9px;max-width:80ch;line-height:1.6}
+.automation-info p{font-size:13px;line-height:1.6;max-width:80ch;margin:8px 9px}
+/* Closed automation cards match the bounded task summaries; evidence expands below. */
+#schedule-cards .schedule-card{display:grid;grid-template-rows:46px 28px 26px 44px auto;gap:8px;padding:16px;min-height:244px;align-content:start}
+#schedule-cards .schedule-title{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;font-size:18px;line-height:23px;max-height:46px;margin:0}
+#schedule-cards .schedule-status{justify-self:start;align-self:center;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;margin:0}
+#schedule-cards .schedule-cadence{font-size:14px;font-weight:500;line-height:26px;margin:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+#schedule-cards .schedule-result{font-size:14px;line-height:22px;margin:0;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;max-height:44px;overflow:hidden;overflow-wrap:anywhere}
+#schedule-cards .registry-details{margin:0;padding-top:4px;min-width:0}
+#schedule-cards .registry-details>summary{font-size:13px;line-height:24px;min-height:28px;padding:0}
+.schedule-row strong{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;max-height:44px;line-height:22px;overflow:hidden}
+.schedule-row small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+@media(max-width:640px){.activity-toolbar{grid-template-columns:minmax(0,1fr) auto}.activity-toolbar .activity-search{grid-column:1 / -1;justify-self:end;width:min(100%,220px)}.activity-toolbar #activity-tabs .filter-chip{font-size:11px;padding:6px 7px}}

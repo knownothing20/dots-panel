@@ -82,7 +82,7 @@ class NativeViewTests(unittest.TestCase):
         self.assertEqual(resolve_language("auto", {"LANG": "zh_CN.UTF-8"}), "zh")
         self.assertEqual(resolve_language("auto", {"LC_ALL": "en_US", "LANG": "zh_CN"}), "en")
         self.assertEqual(resolve_language("zh", {"LANG": "en_US"}), "zh")
-        self.assertEqual(translate("任务", "en"), "Task")
+        self.assertEqual(translate("任务", "en"), "Tasks")
         self.assertEqual(translate("Original {message}", "en"), "Original {message}")
         row = task_rows({"tasks": [{"id": "one", "name": "任务原文", "project": "项目原文"}]}, 0, "en")[0]
         self.assertEqual(row["values"][:3], ("任务原文", "项目原文", "Pending"))
@@ -205,9 +205,9 @@ class NativeViewTests(unittest.TestCase):
         self.assertEqual(paragraph.settings["state"], "disabled")
 
     def test_activity_labels_do_not_claim_real_conversation_sync(self):
-        self.assertEqual(PAGE_NAMES["conversations"], "活动")
-        self.assertEqual(translate(PAGE_NAMES["conversations"], "en"), "Activities")
-        self.assertIn("no separate execution session", translate("已登记活动与工作记录；尚未绑定独立执行会话", "en"))
+        self.assertEqual(PAGE_NAMES["conversations"], "任务")
+        self.assertEqual(translate(PAGE_NAMES["conversations"], "en"), "Tasks")
+        self.assertIn("no separate execution session", translate("已登记任务与工作记录；尚未绑定独立执行会话", "en"))
 
     def test_end_home_cancel_restore_and_use_correct_endpoints(self):
         from types import SimpleNamespace

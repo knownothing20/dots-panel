@@ -218,3 +218,12 @@ The view prioritizes unfinished runs: a freshly observed participant explicitly 
 - 已撤回未发布的独立范围清单接线，不主动导入scope观察、不附带定时同步器；新安装不含任何具体用户Agent/ID/范围数据。已有私有记录不删除
 
 任务卡的未完成运行汇总排除paused旧记录，所有paused记录仍保留在活动详情。没有更新的实质进展时，当前步骤优先显示当前run的next_step，再回退到开始note，不修改真实运行状态。
+
+
+## Activity-centered team work
+
+Activity kind (`task` / `project`) and collaboration mode (`single` / `team`) are independent. A developer plus reviewer can share one team task; children are for distinct deliverables. Use `activity-structure` with a factual reason, not automatic historical reclassification. Existing `project` text is a label, not a relationship.
+
+Run participants have immutable assignment episodes. `agent-run-assign` returns `assignment_id`; pass it to `progress-update`, `activity` or bound-session `ingest` to record the actual author's portrait, panel-local ID and role at that time. A role change creates another episode. Unknown old authors remain un-attributed historical records; do not infer them from today's owner. The UI shows participants in activities, not a separate Agent inventory. There is no ten-minute discovery loop.
+
+`timeline TASK --include-children --limit 100 --offset 0` is the scoped paginated read. Agent, role and child-task filters combine; exhaust pages before claiming complete history. Parent closeout rejects unresolved child runs and still requires integration evidence. See the bundled workflow's tool contract for commands and limitations.

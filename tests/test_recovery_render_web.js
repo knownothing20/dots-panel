@@ -14,6 +14,7 @@ class Node {
  get lastElementChild(){return this.children.at(-1);}
  get firstChild(){return this.children[0];}
 }
+require('./dom_patch_fixture.js')(Node,()=>document);
 const ids=new Map();
 const document={body:new Node(),documentElement:{},activeElement:null,createTreeWalker(){return {nextNode(){return false;}};},getElementById(id){if(!ids.has(id))throw Error('Missing real HTML id: '+id);return ids.get(id);},createElement(tag){return new Node(tag);},createTextNode(text){const n=new Node();n.textContent=text;return n;},querySelectorAll(){return [];}};
 for(const match of fs.readFileSync('web/index.html','utf8').matchAll(/\bid="([^"]+)"/g))ids.set(match[1],new Node());
@@ -30,7 +31,7 @@ for(const lang of ['en','zh']){
  language=lang;translatePage();
  const task={id:'synthetic',name:'<script>not HTML</script>',project:'Synthetic fixture',created:1};
  const run={id:'run',task_id:task.id,status:'waiting_user',started:1,updated:1,lifecycle_reason:'Need choice',next_step:'Choose',closeout:null};
- const state={...empty,tasks:[task],runs:[run],latest_runs:[run],agents:[{id:'agent',name:'Example',avatar:'mint',status:'idle',observed_at:1}],agent_assignments:[{task_id:task.id,agent_id:'agent',work_type:'testing'}],schedules:[{id:'schedule',name:'Schedule',source:'manual',state:'disconnected',updated:1}],software:[{id:'panel',name:'Panel',kind:'dots-panel',description:'Synthetic software',version:'0.2.0',available:true,verified_at:1}]};
+ const state={...empty,tasks:[task],runs:[run],latest_runs:[run],agents:[{id:'agent',name:'Example',avatar:'mint',status:'idle',observed_at:1}],agent_assignments:[{task_id:task.id,agent_id:'agent',work_type:'testing'}],agent_run_assignments:[{task_id:task.id,run_id:run.id,agent_id:'agent',assigned_at:1,work_type:'testing'}],schedules:[{id:'schedule',name:'Schedule',source:'manual',state:'disconnected',updated:1}],software:[{id:'panel',name:'Panel',kind:'dots-panel',description:'Synthetic software',version:'0.2.0',available:true,verified_at:1}]};
  render(state);$('task-filter').value=task.id;render(state);setDetailTab('files');setDetailTab('timeline');
  adviceTaskId=task.id;render(state);assert.equal($('attention-advice').hidden,false);
  $('task-filter').value='';render(state);render(state);

@@ -2,23 +2,31 @@
 from .agent_identity import profile_short_ids
 
 
-def activity_participants(snapshot, task_id):
+def activity_participants(snapshot, task_id, now=None):
+    """Roster for the selected open run only; historical authors stay elsewhere."""
+    import time
+    from .progress import current_run
+    now=time.time() if now is None else now
+    run=current_run(snapshot,task_id,now)
+    if not run or run.get('status') not in {'pending','running','waiting_user','waiting_external','awaiting_review'}:
+        return []
     agents={a['id']:a for a in snapshot.get('agents',[])}
-    runs={r['id']:r for field in ('runs','latest_runs','open_runs','current_runs') for r in snapshot.get(field,[])}
-    grouped={}
+    links={}
     for link in snapshot.get('agent_run_assignments',[]):
-        run=runs.get(link['run_id'],{})
-        if (link.get('task_id') or run.get('task_id'))!=task_id or link['agent_id'] not in agents:continue
-        grouped.setdefault(link['agent_id'],[]).append({'run_id':link['run_id'],'work_type':link.get('work_type','unspecified'),'assigned_at':link.get('assigned_at'), 'source':'run'})
-    for link in snapshot.get('agent_assignments',[]):
-        if link['task_id']==task_id and link['agent_id'] in agents and link['agent_id'] not in grouped:
-            grouped[link['agent_id']]=[{'run_id':None,'work_type':link.get('work_type','unspecified'),'assigned_at':link.get('assigned_at'),'source':'owner'}]
-    keys=profile_short_ids(list(agents.values()))
-    rows=[]
-    for key,links in grouped.items():
-        links.sort(key=lambda a:(-(a['assigned_at'] or 0),a['run_id'] or ''))
-        rows.append({'agent':agents[key],'short_id':keys[key],'assignments':links})
-    rows.sort(key=lambda r:(-(r['assignments'][0]['assigned_at'] or 0),r['agent']['id']))
+        if link.get('run_id')==run['id'] and link.get('task_id') in (None,task_id) and link.get('agent_id') in agents:
+            links.setdefault(link['agent_id'],[]).append(link)
+    episodes={}
+    for episode in snapshot.get('assignment_episodes',[]):
+        if episode.get('run_id')==run['id'] and episode.get('task_id') in (None,task_id) and episode.get('agent_id') in agents:
+            episodes.setdefault(episode['agent_id'],[]).append(episode)
+    keys=profile_short_ids(list(agents.values()));rows=[]
+    for key in links.keys() | episodes.keys():
+        candidates=[e for e in episodes[key] if e.get('ended_at') is None] if key in episodes else links[key]
+        candidates=[a for a in candidates if isinstance(a.get('assigned_at'),(int,float)) and not isinstance(a['assigned_at'],bool) and 0<=a['assigned_at']<=now]
+        if not candidates:continue
+        assignment=max(candidates,key=lambda a:(a['assigned_at'],a.get('id','')))
+        rows.append({'agent':agents[key],'short_id':keys[key],'assignments':[{'run_id':run['id'],'work_type':assignment.get('work_type','unspecified'),'assigned_at':assignment['assigned_at'],'source':'run'}]})
+    rows.sort(key=lambda r:(-r['assignments'][0]['assigned_at'],r['agent']['id']))
     return rows
 
 

@@ -253,6 +253,42 @@
             "zh": "Agent用稳定面板编号、独特固定昵称与原创固定头像；任务名和职责不得写入昵称。复用须先核验同一实际执行者，历史无法核实时明确标记，保留原编号、旧显示名与任务关联。头像不证明身份，人工核验不保证永久会话。",
             "en": "Use a stable panel key, a distinct fixed nickname and an original fixed portrait. Never use a task title or role as the name. Verify the same actual executor before reuse; label unverified history and preserve IDs, previous labels and assignments. Portraits do not prove identity, and manual matches do not guarantee permanent sessions."
           }
+        },
+        {
+          "id": "collaboration-axes",
+          "level": "enforced",
+          "title": {
+            "zh": "活动协作与项目层级分开",
+            "en": "Separate collaboration and project hierarchy"
+          },
+          "body": {
+            "zh": "single/team与task/project独立登记；团队可无子任务，子任务只属一个根项目。旧记录不自动改成团队。面板只记录，不派发或发现执行者。",
+            "en": "Record single/team independently from task/project. Teams need no children; child tasks belong to one root project. Do not auto-classify historical work. Records do not dispatch or discover executors."
+          }
+        },
+        {
+          "id": "assignment-history",
+          "level": "enforced",
+          "title": {
+            "zh": "职责历史与进度作者",
+            "en": "Role history and progress authors"
+          },
+          "body": {
+            "zh": "分派职责用不可改写的episode保存；改变职责创建新段。显式assignment-id记录已核验作者及当时职责，未知历史不据当前负责人倒填。",
+            "en": "Immutable assignment episodes preserve roles. Role changes create a new episode. Explicit assignment IDs record verified authors and event-time roles; unknown history never inherits the current owner."
+          }
+        },
+        {
+          "id": "activity-participants",
+          "level": "workflow",
+          "title": {
+            "zh": "参与者围绕活动展示",
+            "en": "Activity-scoped participants"
+          },
+          "body": {
+            "zh": "只展示活动相关参与者，不单设Agent清单或十分钟全量扫描；本地刷新不等于平台同步，源码与账户Skill安装分别核验。",
+            "en": "Show activity participants without a separate Agent directory or ten-minute inventory. Local refresh is not platform sync; verify source and account Skill installation separately."
+          }
         }
       ]
     }

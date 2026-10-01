@@ -106,8 +106,9 @@ class SkillCatalogTests(unittest.TestCase):
         from dots_panel.desktop_view import Dashboard
         viewer = Dashboard.__new__(Dashboard)
         viewer.language = 'en'
-        viewer.panel = viewer.muted = viewer.fg = viewer.accent = '#000'
-        widget = lambda *a, **k: SimpleNamespace(pack=lambda **kw: None, pack_forget=lambda: None)
+        viewer.panel = viewer.bg = viewer.muted = viewer.fg = viewer.accent = '#000'
+        viewer.live_updates=[]
+        widget = lambda *a, **k: SimpleNamespace(pack=lambda **kw: None, pack_forget=lambda: None, configure=lambda **kw:None, destroy=lambda:None, card_items=[], reflow_cards=lambda:None)
         viewer.tk = SimpleNamespace(Frame=widget)
         viewer.scroll_area = widget
         viewer.card_grid = lambda *a, **kw: widget()
@@ -119,7 +120,7 @@ class SkillCatalogTests(unittest.TestCase):
         row = self.store.snapshot()['rules']['skills'][0]
         viewer.snapshot = {'rules': {'skills': [row, dict(row, id='second', url='https://chatgpt.com/skills?skill_id=example-second'), dict(row, scope='system', name_en='Excluded')]}}
         viewer.expanded_skills = {row["id"], "second"}
-        viewer.compact_row = lambda parent, title, summary, status: (labels.extend([title, summary, status]) or widget())
+        viewer.compact_row = lambda parent, title, summary, status: (labels.extend([title, summary, status]) or SimpleNamespace(surface=widget(),title_label=widget(),summary_label=widget(),status_label=widget()))
         viewer.render_rules()
         self.assertNotIn('Excluded', labels)
         self.assertIn('Example purpose', labels)

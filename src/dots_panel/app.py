@@ -21,7 +21,7 @@ import stat
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qs
 import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -93,6 +93,9 @@ WORK_TYPES = {
     "review": ("审查核对", "Review"),
     "writing": ("内容写作", "Writing"),
     "coordination": ("任务协调", "Coordination"),
+    "copywriting": ("文案", "Copywriting"),
+    "design": ("设计", "Design"),
+    "editing": ("剪辑编辑", "Editing"),
 }
 
 def agent_text(agent, field, language="zh"):
@@ -250,7 +253,10 @@ def project_rules():
 from .recovery_support import RecoveryStoreMixin, recovery_notice
 
 
-class Store(RecoveryStoreMixin):
+from .collaborative_activity import (CollaborationStoreMixin, migrate as migrate_collaboration,
+    validate_structure, assignment_context, attribute, decorate, guard_project_closeout)
+
+class Store(CollaborationStoreMixin, RecoveryStoreMixin):
     def __init__(self, directory):
         requested = Path(directory).expanduser().absolute()
         if any(p.is_symlink() for p in (requested, *requested.parents)):
@@ -395,6 +401,7 @@ class Store(RecoveryStoreMixin):
             db.execute("CREATE INDEX IF NOT EXISTS runs_task_latest ON runs(task_id,started DESC,id DESC)")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS binding_source_thread ON task_bindings(source_type,thread_id)")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS activity_source_event ON activity(task_id,source_event_id) WHERE source_event_id IS NOT NULL")
+            migrate_collaboration(db)
 
     @contextmanager
     def connect(self):
@@ -407,13 +414,15 @@ class Store(RecoveryStoreMixin):
         finally:
             db.close()
 
-    def register(self, key, name, project, tracking_mode="manual"):
+    def register(self, key, name, project, tracking_mode="manual", activity_kind="task", collaboration_mode="single", parent_task_id=None):
         if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", key):
             raise ValueError("Task ID must use lowercase letters, digits, hyphens or underscores")
         if tracking_mode not in ("manual", "heartbeat"):
             raise ValueError("tracking_mode must be manual or heartbeat")
         with self.connect() as db:
-            db.execute("INSERT INTO tasks(id,name,project,created,tracking_mode) VALUES(?,?,?,?,?)", (key, text(name, 120), text(project, 120), time.time(), tracking_mode))
+            db.execute("BEGIN IMMEDIATE")
+            validate_structure(db,key,activity_kind,collaboration_mode,parent_task_id)
+            db.execute("INSERT INTO tasks(id,name,project,created,tracking_mode,activity_kind,collaboration_mode,parent_task_id,mode_source) VALUES(?,?,?,?,?,?,?,?,?)", (key, text(name, 120), text(project, 120), time.time(), tracking_mode,activity_kind,collaboration_mode,parent_task_id,"explicit"))
         self.task_init(key)
         return key
 
@@ -461,7 +470,7 @@ class Store(RecoveryStoreMixin):
                 raise ValueError("New runs require closeout-record evidence before success")
         return self.closeout(key, record["id"], from_status=from_status)
 
-    def update(self, key, status=None, message=None):
+    def update(self, key, status=None, message=None, assignment_id=None):
         if status is not None and status not in STATUSES:
             raise ValueError("Invalid terminal status")
         if status == "succeeded" and self._gate_success(key) is not None:
@@ -469,22 +478,28 @@ class Store(RecoveryStoreMixin):
         now = time.time()
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT status FROM runs WHERE id=?", (key,)).fetchone()
+            row = db.execute("SELECT status,task_id FROM runs WHERE id=?", (key,)).fetchone()
             if not row:
                 raise ValueError("Unknown run ID")
             if row["status"] not in OPEN_STATUSES:
                 raise ValueError("Run already finished")
+            if status == "succeeded":
+                guard_project_closeout(db,row["task_id"],key)
+            if assignment_id and (message is None or status is not None):
+                raise ValueError("Assignment attribution is supported for explicit log messages")
+            context = assignment_context(db,assignment_id,run_id=key) if assignment_id else None
             if message is not None:
-                db.execute("INSERT INTO events(run_id,created,message) VALUES(?,?,?)", (key, now, text(message, 2000)))
+                cursor = db.execute("INSERT INTO events(run_id,created,message) VALUES(?,?,?)", (key, now, text(message, 2000)))
+                attribute(db,"event",cursor.lastrowid,context)
             db.execute("UPDATE runs SET updated=?,status=?,finished=? WHERE id=?", (now, status or row["status"], now if status else None, key))
             if status:
                 # Legacy finish remains supported but must not display an obsolete
                 # waiting reason as evidence for completion.
                 db.execute("UPDATE runs SET lifecycle_reason='',next_step='',lifecycle_evidence='' WHERE id=?", (key,))
 
-    def progress_update(self, run_id, current_step, result="", next_step="", evidence="", completed=None, total=None, unit="", source_event_id=None):
+    def progress_update(self, run_id, current_step, result="", next_step="", evidence="", completed=None, total=None, unit="", source_event_id=None, assignment_id=None):
         from .progress import record_progress
-        return record_progress(self, run_id, current_step, result, next_step, evidence, completed, total, unit, source_event_id)
+        return record_progress(self, run_id, current_step, result, next_step, evidence, completed, total, unit, source_event_id, assignment_id)
 
     def transition(self, key, status, reason, evidence, next_step="", from_status=None):
         """Record a justified lifecycle change; never control the actual executor."""
@@ -509,6 +524,8 @@ class Store(RecoveryStoreMixin):
             if not row:
                 raise ValueError("Unknown run ID")
             previous = row["status"]
+            if status == "succeeded":
+                guard_project_closeout(db,row["task_id"],key)
             if from_status is not None and previous != from_status:
                 raise ValueError("Lifecycle changed; refresh before recording a transition")
             if status not in ALLOWED_TRANSITIONS.get(previous, ()):
@@ -524,15 +541,20 @@ class Store(RecoveryStoreMixin):
                 "lifecycle_reason": reason, "next_step": next_step, "lifecycle_evidence": evidence,
                 "record_only": True}
 
-    def activity(self, project, role, stage, message, task_id=None, state="in_progress"):
+    def activity(self, project, role, stage, message, task_id=None, state="in_progress", assignment_id=None):
         if role not in ("user", "assistant", "system"):
             raise ValueError("Invalid activity role")
         if state not in ("planned", "in_progress", "verified"):
             raise ValueError("Invalid progress state")
         with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             if task_id and not db.execute("SELECT id FROM tasks WHERE id=?", (task_id,)).fetchone():
                 raise ValueError("Unknown task ID")
-            db.execute("INSERT INTO activity(created,project,role,stage,message,task_id,state) VALUES(?,?,?,?,?,?,?)", (time.time(), text(project, 120), role, text(stage, 60), text(message, 4000), task_id, state))
+            context = assignment_context(db,assignment_id,task_id=task_id) if assignment_id else None
+            if context and not task_id:
+                raise ValueError("Attributed activity requires task_id")
+            cursor = db.execute("INSERT INTO activity(created,project,role,stage,message,task_id,state) VALUES(?,?,?,?,?,?,?)", (time.time(), text(project, 120), role, text(stage, 60), text(message, 4000), task_id, state))
+            attribute(db,"activity",cursor.lastrowid,context)
 
     def bind(self, task_id, source_type, thread_id, environment_kind, environment_id, observed_status, observed_at, url=None):
         if source_type not in BINDING_SOURCES or environment_kind not in ENVIRONMENT_KINDS or observed_status not in OBSERVED_STATUSES:
@@ -560,7 +582,7 @@ class Store(RecoveryStoreMixin):
                 db.execute("INSERT INTO task_bindings(task_id,source_type,thread_id,environment_kind,environment_id,observed_status,observed_at,verified_url,synced_at) VALUES(?,?,?,?,?,?,?,?,?)", (task_id, source_type, thread_id, environment_kind, environment_id, observed_status, observed_at, url, time.time()))
         return task_id
 
-    def ingest(self, task_id, source_event_id, role, stage, state, message, observed_at, observed_status=None):
+    def ingest(self, task_id, source_event_id, role, stage, state, message, observed_at, observed_status=None, assignment_id=None):
         if role not in ("user", "assistant", "system") or state not in ("planned", "in_progress", "verified"):
             raise ValueError("Invalid summary role or stage state")
         if observed_status is not None and observed_status not in OBSERVED_STATUSES:
@@ -568,18 +590,28 @@ class Store(RecoveryStoreMixin):
         source_event_id, stage, message = text(source_event_id, 200), text(stage, 60), text(message, 4000)
         observed_at = timestamp(observed_at)
         with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             binding = db.execute("SELECT * FROM task_bindings WHERE task_id=?", (task_id,)).fetchone()
             if not binding:
                 raise ValueError("Bind an actual created session before ingesting its summaries")
             existing = db.execute("SELECT id FROM activity WHERE task_id=? AND source_event_id=?", (task_id, source_event_id)).fetchone()
             if existing:
+                saved = db.execute("SELECT * FROM event_attributions WHERE row_kind='activity' AND row_id=?",(existing["id"],)).fetchone()
+                if assignment_id or saved:
+                    row = db.execute("SELECT * FROM activity WHERE id=?",(existing["id"],)).fetchone()
+                    if not saved or saved["assignment_id"] != assignment_id or any(row[k]!=v for k,v in (("role",role),("stage",stage),("state",state),("message",message),("source_observed_at",observed_at))):
+                        raise ValueError("Source event already records different attributed content")
                 return {"activity_id": existing["id"], "duplicate": True}
+            context = assignment_context(db,assignment_id,task_id=task_id) if assignment_id else None
+            if context and observed_at < context["assigned_at"]:
+                raise ValueError("Event observation predates this assignment")
             task = db.execute("SELECT project FROM tasks WHERE id=?", (task_id,)).fetchone()
             now = time.time()
             cursor = db.execute("INSERT OR IGNORE INTO activity(created,project,role,stage,message,task_id,state,source_event_id,source_observed_at,ingested_at) VALUES(?,?,?,?,?,?,?,?,?,?)", (observed_at, task["project"], role, stage, message, task_id, state, source_event_id, observed_at, now))
             if cursor.rowcount == 0:
                 existing = db.execute("SELECT id FROM activity WHERE task_id=? AND source_event_id=?", (task_id, source_event_id)).fetchone()
                 return {"activity_id": existing["id"], "duplicate": True}
+            attribute(db,"activity",cursor.lastrowid,context)
             if observed_status and observed_at >= binding["observed_at"]:
                 db.execute("UPDATE task_bindings SET observed_status=?,observed_at=?,synced_at=? WHERE task_id=?", (observed_status, observed_at, now, task_id))
             else:
@@ -915,6 +947,7 @@ class Store(RecoveryStoreMixin):
                 raise ValueError("Lifecycle changed; refresh before recording a transition")
             if not latest or latest["id"] != record_id:
                 raise ValueError("Closeout evidence was superseded; review the latest record")
+            guard_project_closeout(db,run["task_id"],run_id)
             if record["verification"] == "failed":
                 raise ValueError("Failed verification cannot close out as succeeded")
             files = db.execute("SELECT ca.artifact_id,ca.sha256,a.task_id FROM closeout_artifacts ca JOIN artifacts a ON a.id=ca.artifact_id WHERE ca.record_id=?", (record_id,)).fetchall()
@@ -1031,6 +1064,12 @@ class Store(RecoveryStoreMixin):
                 agent['previous_names'] = [dict(r) for r in db.execute("SELECT name,name_en,changed_at FROM agent_profile_history WHERE agent_id=? ORDER BY changed_at DESC,id DESC", (agent['id'],))] if has_history else []
             agent_assignments = [dict(r) for r in db.execute("SELECT * FROM agent_assignments ORDER BY assigned_at ASC,task_id ASC")]
             agent_run_assignments = [dict(r) for r in db.execute("SELECT a.*, r.task_id FROM agent_run_assignments a JOIN runs r ON r.id=a.run_id ORDER BY a.assigned_at,a.run_id,a.agent_id")] if "agent_run_assignments" in tables else []
+            assignment_episodes = [dict(r) for r in db.execute("SELECT e.*,r.task_id FROM assignment_episodes e JOIN runs r ON r.id=e.run_id ORDER BY assigned_at,id")] if "assignment_episodes" in tables else []
+            event_attributions = [dict(r) for r in db.execute("SELECT * FROM event_attributions")] if "event_attributions" in tables else []
+            decorate(activity,event_attributions,"activity")
+            decorate(events,event_attributions,"event")
+            activity_total = db.execute("SELECT COUNT(*) FROM activity").fetchone()[0]
+            event_total = db.execute("SELECT COUNT(*) FROM events").fetchone()[0]
             software = [dict(r) for r in db.execute("SELECT * FROM software ORDER BY created ASC LIMIT 100")]
         for item in software:
             kind = item["kind"]
@@ -1056,7 +1095,7 @@ class Store(RecoveryStoreMixin):
         selection = {"runs": runs, "latest_runs": latest_runs, "open_runs": open_runs, "agents": agents, "agent_run_assignments": agent_run_assignments, "stale_after_seconds": stale_seconds}
         current_runs = [run for task in tasks if (run := current_run(selection, task["id"], now)) is not None]
         from .exit_region import load as load_exit_region
-        return {"exit_region": load_exit_region(self.directory), "open_runs": open_runs, "current_runs": current_runs, "progress_updates": progress_updates, "output_summaries": outputs, "recovery": recovery_notice(self.directory), "rules": rules, "about": {"installed_version": VERSION, "install_notes": INSTALL_NOTES, "release": release, "doctor": install_doctor(ROOT, self.directory)}, "artifacts": artifacts, "agents": agents, "agent_assignments": agent_assignments, "agent_run_assignments": agent_run_assignments, "tasks": tasks, "runs": runs, "latest_runs": latest_runs, "closeouts": closeouts, "events": events, "activity": activity, "schedules": schedules, "software": software, "bindings": bindings, "stale_after_seconds": stale_seconds}
+        return {"assignment_episodes":assignment_episodes, "event_attributions":event_attributions, "timeline_window":{"activity_total":activity_total,"event_total":event_total,"truncated":activity_total>len(activity) or event_total>len(events)}, "exit_region": load_exit_region(self.directory), "open_runs": open_runs, "current_runs": current_runs, "progress_updates": progress_updates, "output_summaries": outputs, "recovery": recovery_notice(self.directory), "rules": rules, "about": {"installed_version": VERSION, "install_notes": INSTALL_NOTES, "release": release, "doctor": install_doctor(ROOT, self.directory)}, "artifacts": artifacts, "agents": agents, "agent_assignments": agent_assignments, "agent_run_assignments": agent_run_assignments, "tasks": tasks, "runs": runs, "latest_runs": latest_runs, "closeouts": closeouts, "events": events, "activity": activity, "schedules": schedules, "software": software, "bindings": bindings, "stale_after_seconds": stale_seconds}
 
 
 
@@ -1143,6 +1182,18 @@ def make_server(store, port=8765):
                 if path == "/api/state":
                     body = {"server_time": time.time(), "metrics": metrics.collect(), **store.snapshot()}
                     self.send_body(200, json.dumps(body, ensure_ascii=False).encode())
+                elif path == "/api/collaboration-timeline":
+                    query = parse_qs(urlsplit(self.path).query,keep_blank_values=True,max_num_fields=8)
+                    allowed = {"task_id","include_children","agent_id","work_type","child_task_id","limit","offset"}
+                    if set(query)-allowed or any(len(v)!=1 for v in query.values()) or not query.get("task_id",[""])[0]:
+                        raise ValueError("Invalid timeline query")
+                    include = query.get("include_children",["false"])[0]
+                    if include not in ("true","false","1","0"):
+                        raise ValueError("Invalid include_children")
+                    body = store.collaboration_timeline(query["task_id"][0],include in ("true","1"),
+                        query.get("agent_id",[None])[0],query.get("work_type",[None])[0],
+                        query.get("child_task_id",[None])[0],int(query.get("limit",["100"])[0]),int(query.get("offset",["0"])[0]))
+                    self.send_body(200,json.dumps(body,ensure_ascii=False).encode())
                 elif path == "/health":
                     self.send_body(200, b'{"status":"ok"}')
                 elif path in assets:
@@ -1150,6 +1201,8 @@ def make_server(store, port=8765):
                     self.send_body(200, (ROOT / "web" / filename).read_bytes(), mime)
                 else:
                     self.send_body(404, b'{"error":"Not found"}')
+            except ValueError:
+                self.send_body(400,b'{"error":"Invalid recorded timeline request"}')
             except (OSError, sqlite3.Error):
                 self.send_body(503, b'{"error":"Local data temporarily unavailable"}')
 
@@ -1172,6 +1225,20 @@ def main():
     register.add_argument("--name", required=True)
     register.add_argument("--project", required=True)
     register.add_argument("--tracking-mode", choices=("manual", "heartbeat"), default="manual")
+    register.add_argument("--kind", choices=("task","project"), default="task")
+    register.add_argument("--collaboration-mode", choices=("single","team"), default="single")
+    register.add_argument("--parent-task-id")
+    structure = subs.add_parser("activity-structure", help="Explicit activity classification; never dispatches")
+    structure.add_argument("task_id"); structure.add_argument("--kind", choices=("task","project"))
+    structure.add_argument("--collaboration-mode", choices=("single","team"))
+    structure.add_argument("--parent-task-id"); structure.add_argument("--clear-parent",action="store_true")
+    structure.add_argument("--reason",required=True)
+    end_assignment = subs.add_parser("assignment-end")
+    end_assignment.add_argument("assignment_id"); end_assignment.add_argument("--reason",required=True)
+    timeline = subs.add_parser("timeline",help="Read recorded activity events with optional child aggregation")
+    timeline.add_argument("task_id"); timeline.add_argument("--include-children",action="store_true")
+    timeline.add_argument("--agent-id"); timeline.add_argument("--work-type"); timeline.add_argument("--child-task-id")
+    timeline.add_argument("--limit",type=int,default=100); timeline.add_argument("--offset",type=int,default=0)
     start = subs.add_parser("start")
     start.add_argument("task_id")
     start.add_argument("--note", default="")
@@ -1187,6 +1254,7 @@ def main():
         sub.add_argument("run_id")
         if command == "log":
             sub.add_argument("message")
+            sub.add_argument("--assignment-id")
         if command == "finish":
             sub.add_argument("--status", choices=STATUSES, required=True)
     activity = subs.add_parser("activity")
@@ -1195,6 +1263,7 @@ def main():
     activity.add_argument("--stage", required=True)
     activity.add_argument("message")
     activity.add_argument("--task-id")
+    activity.add_argument("--assignment-id")
     activity.add_argument("--state", choices=("planned", "in_progress", "verified"), default="in_progress")
     bind = subs.add_parser("bind", help="Bind an existing activity to an actually created session; metadata only")
     bind.add_argument("task_id")
@@ -1214,6 +1283,7 @@ def main():
     ingest.add_argument("--state", choices=("planned", "in_progress", "verified"), required=True)
     ingest.add_argument("--observed-at", required=True)
     ingest.add_argument("--observed-status", choices=OBSERVED_STATUSES)
+    ingest.add_argument("--assignment-id")
     platform_import = subs.add_parser("schedule-platform-import", help="Import explicit platform observation from stdin; no platform calls or scheduling")
     platform_import.add_argument("id")
     result_import = subs.add_parser("schedule-result-import", help="Import a bounded, explicit result observation from stdin; no upstream fetch or scheduler change")
@@ -1252,6 +1322,7 @@ def main():
     progress.add_argument("--total", type=float)
     progress.add_argument("--unit", default="")
     progress.add_argument("--source-event-id")
+    progress.add_argument("--assignment-id")
     transition = subs.add_parser("transition", help="Record lifecycle only; does not pause, resume or cancel an executor")
     transition.add_argument("run_id")
     transition.add_argument("--status", choices=LIFECYCLE_STATUSES, required=True)
@@ -1346,17 +1417,23 @@ def main():
             finally:
                 server.server_close()
         elif args.command == "register":
-            print(store.register(args.id, args.name, args.project, args.tracking_mode))
+            print(store.register(args.id, args.name, args.project, args.tracking_mode,args.kind,args.collaboration_mode,args.parent_task_id))
+        elif args.command == "activity-structure":
+            print(json.dumps(store.activity_structure(args.task_id,args.kind,args.collaboration_mode,args.parent_task_id,args.reason,args.clear_parent)))
+        elif args.command == "assignment-end":
+            print(json.dumps(store.assignment_end(args.assignment_id,args.reason)))
+        elif args.command == "timeline":
+            print(json.dumps(store.collaboration_timeline(args.task_id,args.include_children,args.agent_id,args.work_type,args.child_task_id,args.limit,args.offset),ensure_ascii=False))
         elif args.command == "start":
             print(store.start(args.task_id, args.note))
         elif args.command == "receive":
             print(json.dumps(store.receive(args.task_id, args.request_id, args.note, args.reason, args.evidence, args.next_step), ensure_ascii=False))
         elif args.command == "activity":
-            store.activity(args.project, args.role, args.stage, args.message, args.task_id, args.state)
+            store.activity(args.project, args.role, args.stage, args.message, args.task_id, args.state,args.assignment_id)
         elif args.command == "bind":
             print(store.bind(args.task_id, args.source_type, args.thread_id, args.environment_kind, args.environment_id, args.observed_status, args.observed_at, args.url))
         elif args.command == "ingest":
-            print(json.dumps(store.ingest(args.task_id, args.source_event_id, args.role, args.stage, args.state, args.message, args.observed_at, args.observed_status)))
+            print(json.dumps(store.ingest(args.task_id, args.source_event_id, args.role, args.stage, args.state, args.message, args.observed_at, args.observed_status,args.assignment_id)))
         elif args.command == "schedule-platform-import":
             value = decode_import(sys.stdin.buffer.read(MAX_IMPORT_BYTES + 1))
             print(json.dumps(store.schedule_platform_import(args.id, value), ensure_ascii=False))
@@ -1387,7 +1464,7 @@ def main():
         elif args.command == "skill-origin":
             print(json.dumps(store.skill_origin(args.id, args.origin, args.publication, args.observed_at, args.repo_url, args.commit_sha)))
         elif args.command == "progress-update":
-            print(json.dumps(store.progress_update(args.run_id,args.current_step,args.result,args.next_step,args.evidence,args.completed,args.total,args.unit,args.source_event_id),ensure_ascii=False))
+            print(json.dumps(store.progress_update(args.run_id,args.current_step,args.result,args.next_step,args.evidence,args.completed,args.total,args.unit,args.source_event_id,args.assignment_id),ensure_ascii=False))
         elif args.command == "transition":
             print(json.dumps(store.transition(args.run_id, args.status, args.reason, args.evidence, args.next_step, args.from_status), ensure_ascii=False))
         elif args.command == "artifact-designate":
@@ -1417,6 +1494,6 @@ def main():
         elif args.command == "status":
             print(json.dumps(store.snapshot(), ensure_ascii=False, indent=2))
         else:
-            store.update(args.run_id, getattr(args, "status", None), getattr(args, "message", None))
+            store.update(args.run_id, getattr(args, "status", None), getattr(args, "message", None),getattr(args,"assignment_id",None))
     except (ValueError, sqlite3.Error, OSError) as exc:
         parser.exit(1, f"Error: {exc}\n")

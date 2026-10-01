@@ -51,3 +51,12 @@ Artifact archival, draft/final designation, delivery transport acceptance and us
 ## Installation acceptance
 
 Use panel doctor for read-only source/data/schema/bundled-source checks. Report unknown account Skill or scheduler components honestly. Manual installation observations do not install a Skill or create a scheduler. Keep a user's personal environment-rule Skill personal and excluded from the public project bundle. Test normal delivery, waiting/resume and interruption/recovery in isolated synthetic DATA; preserve production tasks and source/account identities.
+
+
+## Team and project closeout
+
+A participant becoming idle or ending its assignment episode does not finish the activity. Preserve its assignment-time role and attributed progress unchanged. For a team activity, check all accepted participant outputs and unresolved work, including independent review when required. Keep the same task for implementation, tests and fixes rather than manufacturing child tasks for stages.
+
+A parent project may have independently scoped child tasks. Success is blocked while any child has no run, an unfinished run, or a latest outcome other than succeeded. The parent still needs its own scope, integration verification and delivery evidence. Cancellation or failure of a child is not success. Any approved scope revision must be explicit with its reason, never silently unlinking work to pass closeout. A later request uses a new run without rewriting prior completion evidence; adding new child scope to a finished parent first requires that new parent run. The guard is checked within the closeout transaction, not from a possibly stale UI count.
+
+Source updates, running viewer refresh, bundled Skill validation, account Skill installation and current-turn loading remain separate checks. Do not claim that saving these files updated an account Skill or that polling local records gives live platform synchronization. Verify actual UI acceptance separately and state any remaining installation or account-update limits.
