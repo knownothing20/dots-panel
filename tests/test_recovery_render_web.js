@@ -34,11 +34,12 @@ for(const lang of ['en','zh']){
  render(state);$('task-filter').value=task.id;render(state);setDetailTab('files');setDetailTab('timeline');
  adviceTaskId=task.id;render(state);assert.equal($('attention-advice').hidden,false);
  $('task-filter').value='';render(state);render(state);
- assert($('task-list').children.length>0);assert($('agent-cards').children.length>0);
+ assert($('task-list').children.length>0);assert.equal($('agent-cards').children.some(node=>node.dataset?.agentId==='agent'),false);
+ $('agent-unknown').open=true;$('agent-unknown').listeners.toggle();assert.equal($('agent-unknown-cards').children.length,1);
  assert.equal($('schedule-cards').style.gridTemplateColumns,undefined,'Schedule layout belongs to responsive CSS');
- const agentDetails=$('agent-cards').children[0].children.find(node=>node.tag==='details');
+ const agentDetails=$('agent-unknown-cards').children[0].children.find(node=>node.tag==='details');
  assert(agentDetails);assert.equal(agentDetails.open,false);agentDetails.open=true;agentDetails.listeners.toggle();
- render(state);assert.equal($('agent-cards').children[0].children.find(node=>node.tag==='details').open,true);
+ render(state);assert.equal($('agent-unknown-cards').children[0].children.find(node=>node.tag==='details').open,true);
  agentDetails.open=false;agentDetails.listeners.toggle();
 
  for(const id of ['schedule-cards','software-cards']){const detail=$(id).children[0].children.find(node=>node.tag==='details');assert(detail);detail.open=true;detail.listeners.toggle();}

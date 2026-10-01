@@ -11,6 +11,7 @@ from .notifications import NotificationState
 from .native_notifications import NativeNotifications
 from .progress import task_progress, current_run, task_meaningful_updated, agent_observation
 from .agent_identity import draw_portrait, identity_label, source_label
+from .agent_directory import agent_directory, directory_label, directory_reason, directory_work_label
 from .app import artifact_delivery_label, verification_label, attention_items, attention_draft, artifact_kind_label, VERSION, verified_repository_url, verified_link, skill_origin_label, skill_publication_label
 from contextlib import contextmanager
 import json
@@ -551,6 +552,10 @@ class Dashboard:
         self.page, self.selected_task, self.timer = "overview", None, None
         self.workspace_filter = "all"
         self.selected_agent = None
+        self.agent_filter = 'all'
+        self.show_agent_history = False
+        self.show_agent_unknown = False
+        self.agent_count_help_open = False
         self.search_query = tk.StringVar(root, value="")
         self.scroll_positions = {}
         self.scroll_dragging = False
@@ -839,7 +844,7 @@ class Dashboard:
         except (OSError, ValueError):
             self.preference_error = True
         if hasattr(self, "page_scroll") and self.page_scroll.winfo_exists():
-            self.scroll_positions[getattr(self, "rendered_page_key", (self.page, self.selected_task))] = self.page_scroll.yview()[0]
+            self.scroll_positions[getattr(self, "rendered_page_key", self.viewport_key())] = self.page_scroll.yview()[0]
         self.language_choice, self.language = choice, resolve_language(choice)
         self.rows = task_rows(self.snapshot, time.time(), self.language)
         self.build_shell()
@@ -905,7 +910,7 @@ class Dashboard:
         more_focus = focused is not None and focused == getattr(self, "more_filter_button", None)
         had_search_focus = hasattr(self, "search_entry") and self.root.focus_get() == self.search_entry
         if hasattr(self, "page_scroll") and self.page_scroll.winfo_exists():
-            self.scroll_positions[getattr(self, "rendered_page_key", (self.page, self.selected_task))] = self.page_scroll.yview()[0]
+            self.scroll_positions[getattr(self, "rendered_page_key", self.viewport_key())] = self.page_scroll.yview()[0]
         old_selection = ()
         if hasattr(self, "task_tree") and self.task_tree.winfo_exists():
             old_selection = self.task_tree.selection()
@@ -942,7 +947,7 @@ class Dashboard:
         if getattr(self, "notifications", None) is not None:
             self.notifications.badges()
             self.notifications.canvas.tk.call("raise", self.notifications.canvas._w)
-        self.rendered_page_key = (self.page, self.selected_task)
+        self.rendered_page_key = self.viewport_key()
         self.last_render_signature = self.view_signature()
         focus_target = getattr(self, "more_filter_button", None) if more_focus else getattr(self, "filter_buttons", {}).get(filter_focus)
         if focus_target is not None and focus_target.winfo_exists():
@@ -1264,7 +1269,11 @@ class Dashboard:
     def view_signature(self):
         now = time.time()
         fresh = tuple(sorted(agent["id"] for agent in self.snapshot.get("agents", []) if agent.get("status") == "running" and isinstance(agent.get("observed_at"), (int, float)) and 0 <= now-agent["observed_at"] <= self.snapshot.get("stale_after_seconds", 120)))
-        return (self.page, self.selected_task, self.language, self.workspace_filter, self.search_query.get(), fresh, display_signature(self.snapshot))
+        directory_fresh = tuple((r['agent']['id'],r['state'],r['historical']) for r in agent_directory(self.snapshot,now)['rows']) if self.page == 'agents' else ()
+        return (self.page, self.selected_task, self.language, self.workspace_filter, self.search_query.get(), fresh, directory_fresh, getattr(self,'selected_agent',None), getattr(self,'agent_filter','all'), getattr(self,'show_agent_history',False), getattr(self,'show_agent_unknown',False), display_signature(self.snapshot))
+
+    def viewport_key(self):
+        return (self.page,getattr(self,'selected_agent',None)) if self.page=='agents' else (self.page,self.selected_task)
 
     def scroll_area(self):
         holder = self.tk.Frame(self.content, bg=self.bg)
@@ -1276,7 +1285,7 @@ class Dashboard:
         body = self.tk.Frame(canvas, bg=self.bg)
         item = canvas.create_window(0, 0, anchor="nw", window=body)
         self.page_scroll = canvas
-        key = (self.page, self.selected_task)
+        key = self.viewport_key()
         position = self.scroll_positions.get(key, 0)
         restore = {"pending": True, "job": None}
         def cancel():
@@ -1508,8 +1517,8 @@ class Dashboard:
             self.label(box, ("Assigned: " if en else "已分派：") + names + (" · Run " if en else " · 运行 ") + progress['current_run_id'], 12, self.muted, raw=True, wrap=800).pack(anchor="w", fill="x", pady=(4, 0))
         step = progress["current_step"].split("\n", 1)[0]
         self.label(box, step, 17, self.fg, True, raw=True, wrap=800).pack(anchor="w", fill="x", pady=(7, 5))
-        if len(progress.get("open_runs", [])) > 1:
-            self.label(box, ("Parallel unfinished runs: " if en else "并行未完成运行：")+str(len(progress["open_runs"])), 13, self.muted, raw=True).pack(anchor="w", pady=(4,0))
+        if len(progress.get("unpaused_runs", [])) > 1:
+            self.label(box, ("Unfinished runs: " if en else "未完成运行：")+str(len(progress["unpaused_runs"])), 13, self.muted, raw=True).pack(anchor="w", pady=(4,0))
         if progress["counts"]:
             count = progress["counts"]
             self.label(box, f"{count['completed']:g} / {count['total']:g} {count['unit']}" + (" · measured" if en else " · 实测记录"), 16, self.accent, raw=True).pack(anchor="w")
@@ -1832,8 +1841,8 @@ class Dashboard:
             observed = participant_observation(owner, self.snapshot, self.language, timezone=self.timezone)
             owner_caption = participant_caption(progress, self.language)
             summary = owner_caption + owner_name + " · " + observed + (" · Run " if self.language == "en" else " · 运行 ") + str(progress["current_run_id"] or "—") + " · " + values[1] + "\n" + values[3] + " · " + self.t("最后更新：") + values[5]
-            if len(progress.get("open_runs", [])) > 1:
-                summary += "\n" + ("Parallel unfinished runs: " if self.language == "en" else "并行未完成运行：") + str(len(progress["open_runs"]))
+            if len(progress.get("unpaused_runs", [])) > 1:
+                summary += "\n" + ("Unfinished runs: " if self.language == "en" else "未完成运行：") + str(len(progress["unpaused_runs"]))
             if progress["current_step"]:
                 step = progress["current_step"].split("\n", 1)[0]
                 summary += "\n" + (("Task update: " if self.language == "en" else "任务近况：") if progress.get("scope") == "task" else ("Step: " if self.language == "en" else "当前步骤：")) + step
@@ -1850,49 +1859,100 @@ class Dashboard:
         self.page, self.selected_agent = "agents", agent_id
         self.render_page()
 
+    def set_agent_filter(self, value):
+        self.agent_filter = value
+        self.render_page()
+
+    def toggle_agent_history(self):
+        self.show_agent_history = not getattr(self, 'show_agent_history', False)
+        self.render_page()
+
+    def toggle_agent_unknown(self):
+        self.show_agent_unknown = not getattr(self, 'show_agent_unknown', False)
+        self.render_page()
+
+    def toggle_agent_count_help(self):
+        self.agent_count_help_open = not getattr(self, 'agent_count_help_open', False)
+        self.render_page()
+
+    def render_agent_directory_card(self, grid, row):
+        agent = row['agent']
+        self.compact_row(grid, agent_text(agent, 'name', self.language), directory_work_label(row,self.language),
+                         directory_label('historical' if row['historical'] else 'unverified' if not row['verified'] else row['state'],self.language),
+                         lambda key=agent['id']: self.open_agent(key), avatar=agent)
+
     def render_agents(self):
         area = self.scroll_area()
-        en = self.language == "en"
-        self.label(area, "Manually recorded executor observations; a profile is not a live session" if en else "人工记录的执行者观察；档案本身不代表正在运行的会话", 13, self.muted, raw=True, wrap=820).pack(anchor="w", pady=(0, 12))
-        agents = sorted(self.snapshot.get("agents", []), key=lambda a: (not (a.get("status") == "running" and agent_observation(a, self.snapshot)["recent"]), -(a.get("observed_at") or 0), a["id"]))
-        selected = next((item for item in agents if item["id"] == getattr(self, "selected_agent", None)), None)
-        if selected:
-            self.filter_chip(area, "← All agents" if en else "← 返回 Agent 列表", lambda: self.open_agent(None)).pack(anchor="w", pady=(0, 12))
-            state = participant_observation(selected, self.snapshot, self.language, timezone=self.timezone)
-            identity = identity_label(selected, self.language)
-            details = identity+"\n"+("Panel ID · " if en else "面板标识 · ")+selected['id']+"\n"+source_label(selected, self.language)+(" · Identity checked at " if en else " · 身份核验时间 ")+timestamp_label(selected.get('identity_observed_at'), self.timezone)
-            if selected.get('identity_evidence'):
-                details += "\n"+selected['identity_evidence']
-            details += "\n"+agent_text(selected, "note", self.language)
-            for previous in selected.get('previous_names', []):
-                details += "\n"+("Previous label (history retained) · " if en else "旧显示名（保留历史） · ")+agent_text(previous, "name", self.language)
-            self.compact_row(area, agent_text(selected, "name", self.language), details, state, avatar=selected)
-            grouped = agent_work(self.snapshot, selected)
-            if not agent_observation(selected, self.snapshot)['recent'] or selected.get('identity_verification') == 'historical':
-                grouped['current'] = []
-            for key, zh, english in (("current", "当前已记录工作", "Current recorded work"), ("unfinished", "未完成的分配", "Unfinished assignments"), ("recent", "近期结束的活动", "Recent terminal activities")):
-                self.label(area, english if en else zh, 16, self.fg, True, raw=True).pack(anchor="w", pady=(14, 7))
+        en = self.language == 'en'
+        directory = agent_directory(self.snapshot)
+        selected_row = next((r for r in directory['rows'] if r['agent']['id'] == getattr(self,'selected_agent',None)),None)
+        if selected_row:
+            selected = selected_row['agent']
+            self.filter_chip(area, '← All agents' if en else '← 返回 Agent 列表', lambda: self.open_agent(None)).pack(anchor='w', pady=(0,12))
+            state = participant_observation(selected,self.snapshot,self.language,timezone=self.timezone)
+            details = directory_reason(selected_row['reason'],self.language)+'\n'+directory_work_label(selected_row,self.language)+'\n'+identity_label(selected,self.language)
+            details += '\n'+('Panel ID · ' if en else '面板标识 · ')+selected['id']+'\n'+source_label(selected,self.language)+(' · Identity checked at ' if en else ' · 身份核验时间 ')+timestamp_label(selected.get('identity_observed_at'),self.timezone)
+            details += '\n'+('Status observed at · ' if en else '状态观察时间 · ')+timestamp_label(selected.get('observed_at'),self.timezone)
+            if selected.get('identity_evidence'):details += '\n'+selected['identity_evidence']
+            details += '\n'+agent_text(selected,'note',self.language)
+            for previous in selected.get('previous_names',[]):
+                details += '\n'+('Previous label (history retained) · ' if en else '旧显示名（保留历史） · ')+agent_text(previous,'name',self.language)
+            self.compact_row(area,agent_text(selected,'name',self.language),details,state,avatar=selected)
+            grouped = agent_work(self.snapshot,selected)
+            grouped['current'] = selected_row['work'] if selected_row['state']=='running' else []
+            for key,zh,english in (('current','当前已记录工作','Current recorded work'),('unfinished','未完成的分配','Unfinished assignments'),('recent','近期结束的活动','Recent terminal activities')):
+                self.label(area,english if en else zh,16,self.fg,True,raw=True).pack(anchor='w',pady=(14,7))
                 for assignment in grouped[key]:
-                    task = assignment["task"]
-                    summary = work_type_label(assignment.get("work_type"), self.language)
-                    state = self.t(STATUS.get(assignment["status"], assignment["status"]))
-                    self.compact_row(area, task["name"], summary, state, lambda key=task["id"]: self.open_task(key))
-                if not grouped[key]:
-                    self.label(area, "None recorded" if en else "暂无记录", 13, self.muted, raw=True).pack(anchor="w")
+                    task=assignment['task'];summary=work_type_label(assignment.get('work_type'),self.language)
+                    state=self.t(STATUS.get(assignment['status'],assignment['status']))
+                    self.compact_row(area,task['name'],summary,state,lambda key=task['id']:self.open_task(key))
+                if not grouped[key]:self.label(area,'None recorded' if en else '暂无记录',13,self.muted,raw=True).pack(anchor='w')
             return
-        grid = self.card_grid(area, minimum=285, maximum=3)
-        for agent in agents:
-            grouped = agent_work(self.snapshot, agent)
-            counts = (f"{len(grouped['unfinished'])} unfinished · {len(grouped['recent'])} recent" if en else f"{len(grouped['unfinished'])} 项未完成 · {len(grouped['recent'])} 项近期结束")
-            observation = agent_observation(agent, self.snapshot)
-            current = grouped["current"] if observation["recent"] and agent.get("identity_verification") != "historical" else []
-            work = (work_type_label(current[0].get("work_type"), self.language)+" · "+current[0]["task"]["name"]) if current else ("No current work recorded" if en else "暂无当前工作记录")
-            summary = identity_label(agent, self.language)+"\n"+("Current work · " if en else "当前职责 · ")+work+"\n"+counts+"\n"+source_label(agent,self.language)+(" · Identity checked at " if en else " · 身份核验时间 ")+timestamp_label(agent.get("identity_observed_at"), self.timezone)+"\n"+("Status observed at · " if en else "状态观察时间 · ")+timestamp_label(agent.get("observed_at"), self.timezone)
-            state = ("Last observed · " if en else "最近观察 · ") if observation['recent'] else ("Current unconfirmed · Last record · " if en else "当前待核实 · 上次记录 · ")
-            state += agent_status_label(observation['status'], self.language)
-            self.compact_row(grid, agent_text(agent, "name", self.language), summary, state, lambda key=agent["id"]: self.open_agent(key), avatar=agent)
-        if not agents:
-            self.label(area, "No agents registered" if en else "尚未登记 Agent", 16, self.muted, raw=True).pack(anchor="w", pady=20)
+        bar = self.tk.Frame(area,bg=self.bg);bar.pack(fill='x',pady=(0,8))
+        old_buttons=getattr(self,'agent_filter_buttons',{})
+        focus=self.root.focus_get()
+        focused=next((key for key,button in old_buttons.items() if button is focus),None)
+        self.agent_filter_buttons={}
+        selected_filter=getattr(self,'agent_filter','all')
+        for key in ('all','running','idle','unconfirmed','blocked','unavailable'):
+            if key in ('blocked','unavailable') and not directory['counts'][key] and selected_filter!=key:continue
+            button=self.filter_chip(bar,f"{directory['counts'][key]}  {directory_label(key,self.language)}",lambda value=key:self.set_agent_filter(value),selected_filter==key)
+            self.agent_filter_buttons[key]=button
+        def arrange(event=None):
+            width=event.width if event is not None else bar.winfo_width()
+            columns=2 if width<570 else 4
+            for index in range(4):bar.columnconfigure(index,weight=1 if index<columns else 0,uniform='agent-stats' if index<columns else '')
+            for index,button in enumerate(self.agent_filter_buttons.values()):button.grid(row=index//columns,column=index%columns,sticky='ew',padx=(0,8),pady=(0,6))
+        bar.bind('<Configure>',arrange)
+        self.root.after_idle(arrange)
+        if focused in self.agent_filter_buttons:self.root.after_idle(self.agent_filter_buttons[focused].focus_set)
+        self.filter_chip(area,('How counts work' if en else '计数说明')+(' ⌃' if getattr(self,'agent_count_help_open',False) else ' ⌄'),self.toggle_agent_count_help).pack(anchor='w',pady=(0,10))
+        if getattr(self,'agent_count_help_open',False):
+            explanation=(f"Total profiles: {directory['counts']['profiles']}, including history. The main count and default list include only non-historical agents with manual identity-match evidence, not a platform-wide online count or fixed worker pool. State unconfirmed covers only verified identities with expired state or unconfirmed assignments; unknown identities and history have separate disclosures outside the top counts. Working also requires a recent running observation and a valid non-paused open run assignment; standby does not mean tasks are complete. Local records refresh every 5 seconds." if en else f"档案总数 {directory['counts']['profiles']}（含历史）。主计数与默认列表仅含非历史、已有人工身份核验证据的 Agent，不等于全平台在线人数或固定执行池。状态待核实只统计已核实身份目录中状态过期或关联待确认的记录；身份待核实与历史各自折叠，不进入顶部计数。工作中还须有近期运行观察与有效未暂停运行关联；待命不代表任务完成。每5秒重读本地登记。")
+            self.label(area,explanation,12,self.muted,raw=True,wrap=820).pack(anchor='w',pady=(0,12))
+        visible=[row for row in directory['rows'] if row['verified'] and (selected_filter=='all' or row['state']==selected_filter)]
+        unknown=[row for row in directory['rows'] if not row['historical'] and not row['verified']]
+        historical=[row for row in directory['rows'] if row['historical']]
+        if visible:
+            grid=self.card_grid(area,minimum=285,maximum=3)
+            for row in visible:self.render_agent_directory_card(grid,row)
+        else:
+            message=('Expand historical profiles below' if en else '历史档案可在下方展开') if historical else ('No profiles match this filter' if en else '此筛选下暂无档案')
+            self.label(area,message,14,self.muted,raw=True).pack(anchor='w',pady=(8,12))
+        if unknown:
+            expanded=getattr(self,'show_agent_unknown',False)
+            caption=directory_label('unverified',self.language)+f" · {len(unknown)}"+(' ⌃' if expanded else ' ⌄')
+            self.filter_chip(area,caption,self.toggle_agent_unknown).pack(anchor='w',pady=(10,12))
+            if expanded:
+                grid=self.card_grid(area,minimum=285,maximum=3)
+                for row in unknown:self.render_agent_directory_card(grid,row)
+        if historical:
+            expanded=getattr(self,'show_agent_history',False)
+            caption=directory_label('historical',self.language)+f" · {len(historical)}"+(' ⌃' if expanded else ' ⌄')
+            self.filter_chip(area,caption,self.toggle_agent_history).pack(anchor='w',pady=(10,12))
+            if expanded:
+                grid=self.card_grid(area,minimum=285,maximum=3)
+                for row in historical:self.render_agent_directory_card(grid,row)
 
     def toggle_registry_detail(self, kind, key):
         attribute = "expanded_" + kind

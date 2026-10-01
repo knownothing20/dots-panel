@@ -144,3 +144,17 @@ button,select{min-height:40px}.nav{color:#596d60;font-size:15px}.nav-label,.eyeb
 .agent-current{display:block;grid-column:auto;font-size:14px;color:#405c49;line-height:1.6;overflow-wrap:anywhere}
 .owner-badge>.agent-avatar.fixed-portrait{padding:0;background:transparent;border-radius:9px}
 .agent-details p{overflow-wrap:anywhere;white-space:pre-wrap}
+
+/* Profile directory: compact counts, evidence in details, history collapsed by default. */
+.agent-summary{display:flex;flex-wrap:wrap;gap:9px;margin:0 0 8px}
+.agent-stat{display:flex;align-items:baseline;gap:9px;border:1px solid #dce7d8;border-radius:12px;padding:10px 16px;background:#f1f5ec;color:#526952;font:inherit;font-size:13px;cursor:pointer}
+.agent-stat-value{font-size:22px;font-weight:650;color:#294d3a;font-variant-numeric:tabular-nums}
+.agent-stat[aria-pressed=true]{background:#e0efe2;border-color:#a9d1b4;color:#245f42}
+.agent-stat:focus-visible,.agent-history>summary:focus-visible{outline:2px solid #258560;outline-offset:3px}
+.agent-count-help{font-size:12px;color:#6a7b68;margin:0 0 16px;max-width:850px}.agent-count-help>summary{cursor:pointer;padding:4px 0}.agent-count-help p{line-height:1.7}
+.agent-row .agent-current{font-size:14px;line-height:1.55;margin:13px 0 8px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.agent-row>.agent-details{margin-top:10px}.agent-details>summary{font-size:13px;color:#3b8057;cursor:pointer}.agent-details h3{font-size:14px;margin-top:16px}
+.agent-history{margin-top:20px;border-top:1px solid #dbe5d5;padding-top:14px}.agent-history>summary{font-size:14px;font-weight:600;color:#647960;cursor:pointer;padding:8px 0}
+.agent-history-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-top:12px}
+@media(min-width:1280px){.agent-history-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:720px){.agent-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.agent-stat{justify-content:space-between;padding:9px 12px}.agent-history-grid{grid-template-columns:1fr}.agent-stat-value{font-size:20px}}

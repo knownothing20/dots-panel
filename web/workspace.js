@@ -68,6 +68,8 @@ globalThis.PanelWorkspace = {
     const scope=!update&&meaningful[0]&&!this.activityRun(state,meaningful[0],runs)?'task':'run';
     return {latest,steps:current,update,updates,counts,scope,current_run:currentRun,current_run_id:currentRun?.id||null,
       open_runs:openRuns.map(({id,status,note,started})=>({id,status,note:note||'',started})),
+      unpaused_runs:openRuns.filter(r=>r.status!=='paused').map(({id,status,note,started})=>({id,status,note:note||'',started})),
+      current_step:update?.current_step||meaningful[0]?.message||currentRun?.next_step||latest?.message||currentRun?.note||'',
       verified:[...stages.values()].filter(value=>value==='verified').length,total:stages.size};
   },
   progress(activity, taskId) {
@@ -97,6 +99,48 @@ globalThis.PanelWorkspace = {
 
 // Human-configured profile variants; never machine-translate user text.
 globalThis.PanelAgents = {
+  directory(state,now=Date.now()/1000) {
+    const finite=value=>typeof value==='number'&&Number.isFinite(value);
+    const agents=[...new Map((state.agents||[]).map(a=>[a.id,a])).values()],tasks=new Map((state.tasks||[]).map(t=>[t.id,t]));
+    const runs=new Map(['runs','latest_runs','current_runs','open_runs'].flatMap(key=>state[key]||[]).map(r=>[r.id,r]));
+    const order=['running','idle','unconfirmed','blocked','unavailable'],open=new Set(['running','waiting_user','waiting_external','awaiting_review']);
+    const counts={all:0,profiles:0,running:0,idle:0,unconfirmed:0,blocked:0,unavailable:0,historical:0,unverified:0},rows=[];
+    for(const agent of agents){
+      const historical=agent.identity_verification==='historical'||agent.identity_source==='historical';
+      const links=(state.agent_run_assignments||[]).filter(a=>a.agent_id===agent.id);
+      const latest=links.length&&links.every(a=>finite(a.assigned_at))?Math.max(...links.map(a=>a.assigned_at)):null;
+      const latestLinks=latest===null?[]:links.filter(a=>a.assigned_at===latest),linked=latestLinks.map(a=>runs.get(a.run_id));
+      const complete=linked.length>0&&linked.every(r=>r&&tasks.has(r.task_id)),work=[];
+      if(complete){const pairs=linked.map((run,i)=>({run,link:latestLinks[i]})).sort((a,b)=>Number(!open.has(a.run.status))-Number(!open.has(b.run.status))||(b.run.started||0)-(a.run.started||0)||a.run.id.localeCompare(b.run.id));for(const {run,link} of pairs)if(!work.some(w=>w.task.id===run.task_id))work.push({task:tasks.get(run.task_id),run_id:run.id,status:run.status,work_type:link.work_type||'unspecified',source:'run'});}
+      else if(!links.length){const owners=(state.agent_assignments||[]).filter(a=>a.agent_id===agent.id&&tasks.has(a.task_id)).slice().sort((a,b)=>(b.assigned_at||0)-(a.assigned_at||0)||b.task_id.localeCompare(a.task_id));if(owners.length){const a=owners[0];work.push({task:tasks.get(a.task_id),run_id:null,status:null,work_type:a.work_type||'unspecified',source:'owner'});}}
+      const observation=this.observation(agent,state,now),verified=typeof agent.identity_evidence==='string'&&Boolean(agent.identity_evidence.trim())&&agent.identity_verification==='observed'&&agent.identity_source==='manual'&&finite(agent.identity_observed_at)&&agent.identity_observed_at<=now;
+      let bucket='unconfirmed',reason='observation';
+      if(historical)reason='historical';
+      else if(!verified)reason='identity';
+      else if(!observation.recent)reason='observation';
+      else if(['idle','blocked','unavailable'].includes(agent.status))bucket=reason=agent.status;
+      else if(agent.status==='running'){
+        if(!complete)reason='assignment';
+        else if(new Set(linked.map(r=>r.task_id)).size!==1)reason='conflict';
+        else if(agent.observed_at<latest)reason='before_assignment';
+        else if(!linked.some(r=>open.has(r.status)))reason=linked.some(r=>r.status==='paused')?'paused':'terminal';
+        else bucket=reason='running';
+      }
+      counts.profiles++;counts.historical+=Number(historical);if(!historical){if(verified){counts.all++;counts[bucket]++;}else counts.unverified++;}rows.push({agent,state:bucket,reason,historical,verified:Boolean(verified&&!historical),work});
+    }
+    rows.sort((a,b)=>Number(a.historical)-Number(b.historical)||order.indexOf(a.state)-order.indexOf(b.state)||(b.agent.observed_at||0)-(a.agent.observed_at||0)||a.agent.id.localeCompare(b.agent.id));
+    return {counts,rows};
+  },
+  directoryLabel(key,language='zh') {return ({all:['已核实 Agent','Verified agents'],running:['工作中','Working'],idle:['待命','Standby'],unconfirmed:['状态待核实','State unconfirmed'],unverified:['身份待核实档案','Unverified identities'],blocked:['受阻','Blocked'],unavailable:['不可用','Unavailable'],historical:['历史档案','Historical profiles']}[key]||['待核实','Unconfirmed'])[language==='en'?1:0];},
+  directoryReason(key,language='zh') {
+    const labels={historical:['历史留存，当前执行者未核实','Historical record; current executor unverified'],identity:['执行者对应关系尚未核实','Executor match is unverified'],observation:['状态观察缺失、过期或时间无效','Status observation is missing, expired or invalid'],assignment:['缺少当前有效运行关联或关联时间','Current valid run assignment or assignment time is missing'],conflict:['最新关联包含不同任务，当前归属待核实','Latest assignments span different tasks; current ownership is unconfirmed'],before_assignment:['状态观察早于最新分派','Status was observed before the latest assignment'],paused:['最新关联运行已暂停，不计为工作中','Latest assigned run is paused; not counted as working'],terminal:['最新关联运行已结束，不能据旧观察计为工作中','Latest assigned run is terminal; the old observation cannot establish working'],running:['近期运行观察、已核实身份及有效开放运行相符','Recent running observation, verified identity and valid open run agree'],idle:['近期观察为待命，不代表所关联任务已完成','Recently observed standby; associated tasks are not necessarily complete'],blocked:['近期观察为受阻','Recently observed blocked'],unavailable:['近期观察为不可用','Recently observed unavailable']};
+    return (labels[key]||labels.observation)[language==='en'?1:0];
+  },
+  directoryWork(row,language='zh') {
+    const en=language==='en';if(!row.work.length)return row.state==='unconfirmed'?(en?'Current task unconfirmed':'当前任务待核实'):(en?'No task recorded':'暂无任务记录');
+    const label=row.state==='running'?(en?'Current task':'当前任务'):row.work[0].source==='owner'?(en?'Linked task':'关联任务'):(en?'Recent task':'最近任务');
+    return label+' · '+row.work.map(w=>w.task.name).join(' / ');
+  },
   observation(agent,state={},now=Date.now()/1000) {
     const observed=Number(agent?.observed_at),age=now-observed;
     const known=typeof agent?.observed_at==='number'&&Number.isFinite(observed);

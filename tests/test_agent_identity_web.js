@@ -32,16 +32,17 @@ const state={agents:[a],tasks:[{id:'goal',name:'Actual task'}],runs:[{id:'run',t
 const before=JSON.stringify(state);
 for(const spec of specs){const portrait=agentAvatar({...a,portrait_spec:spec});assert.equal(portrait.attrs['aria-hidden'],'true');assert.equal(portrait.children[0].children.length,spec.shapes.length);assert.equal(portrait.children[0].attrs.viewBox,'0 0 64 64');}
 const zh=JSON.stringify(copy(agentAvatar(a)));language='en';assert.equal(JSON.stringify(copy(agentAvatar({...a,name:'Different fixed display',work_type:'review'}))),zh);
-renderAgents(state);let card=$('agent-cards').children[0];assert.equal(card.children[0].children[1].textContent,'Qingya');assert.ok(card.children[1].textContent.includes('Manually matched'));assert.ok(card.children[2].textContent.includes('Current work'));assert.ok(card.children[2].textContent.includes('Actual task'));
-let details=card.children.find(n=>n.tag==='details');assert.ok(details.children.some(n=>n.textContent?.includes('Old task label')));details.open=true;details.listeners.toggle();
+renderAgents(state);let card=$('agent-cards').children[0];assert.equal(card.children[0].children[1].textContent,'Qingya');assert.ok(card.children[1].textContent.includes('Current task'));assert.ok(card.children[1].textContent.includes('Actual task'));assert.ok(!card.children[1].textContent.includes('Manually matched'));
+let details=card.children.find(n=>n.tag==='details');assert.ok(details.children.some(n=>n.textContent?.includes('Manually matched')));assert.ok(details.children.some(n=>n.textContent?.includes('Old task label')));details.open=true;details.listeners.toggle();
 renderAgents(state);assert.equal($('agent-cards').children[0].children.find(n=>n.tag==='details').open,true);
-const historical={...a,identity_source:'historical',identity_verification:'historical'};renderAgents({...state,agents:[historical]});card=$('agent-cards').children[0];assert.ok(card.children[1].textContent.includes('Historical profile'));assert.ok(!card.children[2].textContent.includes('Actual task'));assert.equal(PanelAgents.taskLead({...state,agents:[historical]},'goal').active.length,0);assert.equal(PanelAgents.taskLead({...state,agents:[historical]},'goal').assigned[0].id,'fixed');
+const historical={...a,identity_source:'historical',identity_verification:'historical'};renderAgents({...state,agents:[historical]});assert.equal($('agent-history-cards').children.length,0);$('agent-history').open=true;$('agent-history').listeners.toggle();card=$('agent-history-cards').children[0];assert.equal(card.children[0].children[2].textContent,'Historical profiles');assert.ok(card.children[1].textContent.includes('Recent task'));assert.equal(PanelAgents.taskLead({...state,agents:[historical]},'goal').active.length,0);assert.equal(PanelAgents.taskLead({...state,agents:[historical]},'goal').assigned[0].id,'fixed');
 const differentTimes={...a,identity_observed_at:946684800,observed_at:1609459200};
 renderAgents({...state,agents:[differentTimes]});card=$('agent-cards').children[0];
-const identityTime=card.children.find(n=>n.className==='agent-identity-time');
-const statusTime=card.children.find(n=>n.className==='agent-observed');
+const evidence=card.children.find(n=>n.tag==='details');
+const identityTime=evidence.children.find(n=>n.className==='agent-identity-time');
+const statusTime=evidence.children.find(n=>n.className==='agent-observed');
 assert.ok(identityTime.textContent.includes(stamp(946684800)));assert.ok(!identityTime.textContent.includes(stamp(1609459200)));
 assert.ok(statusTime.textContent.includes(stamp(1609459200)));assert.ok(!statusTime.textContent.includes(stamp(946684800)));
-language='zh';renderAgents(state);card=$('agent-cards').children[0];assert.equal(card.children[0].children[1].textContent,'青芽');assert.ok(card.children[1].textContent.includes('人工核验'));assert.ok(card.children[2].textContent.includes('当前职责'));assert.equal(JSON.stringify(state),before);
+language='zh';renderAgents(state);card=$('agent-cards').children[0];assert.equal(card.children[0].children[1].textContent,'青芽');assert.ok(card.children[1].textContent.includes('当前任务'));assert.ok(card.children.find(n=>n.tag==='details').children.some(n=>n.textContent?.includes('人工核验')));assert.equal(JSON.stringify(state),before);
 `,context);
 console.log('Fixed portraits: all 48 shared shapes, locale/name independence, identity evidence, historical safety and retained disclosure verified');
