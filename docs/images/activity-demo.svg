@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="820" viewBox="0 0 1280 820" role="img"><title>下一步是什么，成果在哪里</title><desc>原创设计演示；所有任务、人物和状态均为虚构，不含私人数据，非实时截图。</desc><defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#f6f4ec"/><stop offset="1" stop-color="#e7f3ee"/></linearGradient><filter id="shadow" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#275b4c" flood-opacity=".09"/></filter></defs>
+<rect x="0" y="0" width="1280" height="820" rx="0" fill="url(#bg)" stroke="none" />
+<text x="60" y="55" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="16" font-weight="600" fill="#648277">dots panel  /  ACTIVITY</text>
+<text x="60" y="116" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="40" font-weight="700" fill="#244a42">下一步是什么，成果在哪里</text>
+<text x="62" y="156" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="18" font-weight="400" fill="#687c73">一项活动，连起阶段记录、检查依据和正式输出。</text>
+<rect x="60" y="194" width="1160" height="558" rx="26" fill="#fdfefa" stroke="none" filter="url(#shadow)"/>
+<text x="64" y="794" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="14" font-weight="400" fill="#6b8178">原创界面演示 · 全部为虚构示例 · 非实时运行数据</text>
+<rect x="60" y="194" width="198" height="558" rx="26" fill="#f2f5ef" stroke="none" />
+<text x="88" y="242" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="22" font-weight="700" fill="#244a42">●  dots panel</text>
+<text x="101" y="282" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="16" font-weight="400" fill="#718277">总览</text>
+<rect x="78" y="305" width="162" height="38" rx="12" fill="#dbeee3" stroke="none" />
+<text x="101" y="331" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="16" font-weight="600" fill="#254c40">活动</text>
+<text x="101" y="380" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="16" font-weight="400" fill="#718277">Agent</text>
+<text x="101" y="429" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="16" font-weight="400" fill="#718277">定时任务</text>
+<text x="101" y="478" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="16" font-weight="400" fill="#718277">软件</text>
+<text x="101" y="527" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="16" font-weight="400" fill="#718277">规则</text>
+<text x="101" y="576" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="16" font-weight="400" fill="#718277">关于与版本</text>
+<text x="101" y="625" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="16" font-weight="400" fill="#718277">设置</text>
+<text x="290" y="243" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="25" font-weight="700" fill="#244a42">制作活动海报</text>
+<rect x="1060" y="218" width="126" height="30" rx="15" fill="#fff0d9" stroke="none" />
+<text x="1074" y="239" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="14" font-weight="600" fill="#246b52">等待验收</text>
+<text x="290" y="280" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="15" font-weight="400" fill="#6d8077">星禾 · 视觉设计     /     2 项成果     /     最近记录 14:20</text>
+<rect x="290" y="308" width="872" height="62" rx="14" fill="#e9f4ec" stroke="none" />
+<text x="310" y="333" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="14" font-weight="400" fill="#628271">正式成果</text>
+<text x="310" y="356" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="18" font-weight="600" fill="#244a42">海报 A.png   ·   海报 B.png</text>
+<rect x="1005" y="324" width="130" height="30" rx="15" fill="#def4e9" stroke="none" />
+<text x="1019" y="345" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="14" font-weight="600" fill="#246b52">2 个文件</text>
+<text x="291" y="408" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="18" font-weight="600" fill="#244a42">时间线</text>
+<text x="771" y="408" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="18" font-weight="600" fill="#244a42">已登记文件</text>
+<circle cx="302" cy="452" r="6" fill="#67b695"/>
+<text x="322" y="457" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="14" font-weight="400" fill="#73857a">14:20</text>
+<text x="385" y="457" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="17" font-weight="600" fill="#244a42">提交验收</text>
+<text x="385" y="484" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="14" font-weight="400" fill="#74857b">两个版本已归档，等待反馈</text>
+<circle cx="302" cy="533" r="6" fill="#67b695"/>
+<text x="322" y="538" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="14" font-weight="400" fill="#73857a">14:05</text>
+<text x="385" y="538" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="17" font-weight="600" fill="#244a42">版式检查通过</text>
+<text x="385" y="565" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="14" font-weight="400" fill="#74857b">核对了边距、文字与图像边界</text>
+<circle cx="302" cy="614" r="6" fill="#67b695"/>
+<text x="322" y="619" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="14" font-weight="400" fill="#73857a">13:40</text>
+<text x="385" y="619" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="17" font-weight="600" fill="#244a42">开始设计</text>
+<text x="385" y="646" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="14" font-weight="400" fill="#74857b">确认目标：一张清楚易读的海报</text>
+<rect x="770" y="433" width="392" height="91" rx="15" fill="#f6f7f2" stroke="none" />
+<rect x="787" y="450" width="55" height="55" rx="10" fill="#dbeee1" stroke="none" />
+<text x="799" y="483" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="13" font-weight="600" fill="#244a42">PNG</text>
+<text x="860" y="466" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="19" font-weight="600" fill="#244a42">海报 A.png</text>
+<text x="860" y="497" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="14" font-weight="400" fill="#748278">PNG · 设计稿 · 已归档</text>
+<rect x="770" y="541" width="392" height="91" rx="15" fill="#f6f7f2" stroke="none" />
+<rect x="787" y="558" width="55" height="55" rx="10" fill="#dbeee1" stroke="none" />
+<text x="799" y="591" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="13" font-weight="600" fill="#244a42">PNG</text>
+<text x="860" y="574" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="19" font-weight="600" fill="#244a42">海报 B.png</text>
+<text x="860" y="605" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="14" font-weight="400" fill="#748278">PNG · 设计稿 · 已归档</text>
+<text x="772" y="681" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="14" font-weight="400" fill="#6b8176">归档、发送、打开、验收，分别记录</text>
+</svg>

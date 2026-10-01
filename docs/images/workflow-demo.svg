@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="820" viewBox="0 0 1280 820" role="img"><title>把“应该完成了”变成“检查过了”</title><desc>原创设计演示；所有任务、人物和状态均为虚构，不含私人数据，非实时截图。</desc><defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#f6f4ec"/><stop offset="1" stop-color="#e7f3ee"/></linearGradient><filter id="shadow" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#275b4c" flood-opacity=".09"/></filter></defs>
+<rect x="0" y="0" width="1280" height="820" rx="0" fill="url(#bg)" stroke="none" />
+<text x="60" y="55" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="16" font-weight="600" fill="#648277">dots panel  /  WORKFLOW</text>
+<text x="60" y="116" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="40" font-weight="700" fill="#244a42">把“应该完成了”变成“检查过了”</text>
+<text x="62" y="156" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="18" font-weight="400" fill="#687c73">从清晰的任务约定，到有依据的交付；每一步都留下可继续的记录。</text>
+<rect x="60" y="194" width="1160" height="558" rx="26" fill="#fdfefa" stroke="none" filter="url(#shadow)"/>
+<text x="64" y="794" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="14" font-weight="400" fill="#6b8178">原创界面演示 · 全部为虚构示例 · 非实时运行数据</text>
+<rect x="91" y="237" width="253" height="247" rx="18" fill="#eef4ff" stroke="none" />
+<text x="115" y="285" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="31" font-weight="600" fill="#688a79">01</text>
+<text x="115" y="336" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="24" font-weight="700" fill="#244a42">交代任务</text>
+<text x="115" y="385" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="15" font-weight="400" fill="#677f72">目标、范围与验收标准</text>
+<text x="115" y="415" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="15" font-weight="400" fill="#677f72">先说明，少走弯路</text>
+<rect x="372" y="237" width="253" height="247" rx="18" fill="#e6f4eb" stroke="none" />
+<text x="396" y="285" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="31" font-weight="600" fill="#688a79">02</text>
+<text x="396" y="336" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="24" font-weight="700" fill="#244a42">记录进展</text>
+<text x="396" y="385" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="15" font-weight="400" fill="#677f72">阶段、负责人和下一步</text>
+<text x="396" y="415" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="15" font-weight="400" fill="#677f72">等待原因也能看见</text>
+<rect x="653" y="237" width="253" height="247" rx="18" fill="#fff2df" stroke="none" />
+<text x="677" y="285" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="31" font-weight="600" fill="#688a79">03</text>
+<text x="677" y="336" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="24" font-weight="700" fill="#244a42">归档成果</text>
+<text x="677" y="385" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="15" font-weight="400" fill="#677f72">每个任务一个文件夹</text>
+<text x="677" y="415" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="15" font-weight="400" fill="#677f72">正式文件显式登记</text>
+<rect x="934" y="237" width="253" height="247" rx="18" fill="#eeeaf5" stroke="none" />
+<text x="958" y="285" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="31" font-weight="600" fill="#688a79">04</text>
+<text x="958" y="336" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="24" font-weight="700" fill="#244a42">检查交付</text>
+<text x="958" y="385" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="15" font-weight="400" fill="#677f72">核对内容与验证依据</text>
+<text x="958" y="415" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="15" font-weight="400" fill="#677f72">完成状态有迹可循</text>
+<rect x="91" y="526" width="534" height="166" rx="18" fill="#f5f7f0" stroke="none" />
+<text x="116" y="565" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="22" font-weight="700" fill="#244a42">SOURCE · 公开源码</text>
+<text x="116" y="604" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="17" font-weight="400" fill="#6a8075">程序 / 文档 / 合成演示</text>
+<text x="116" y="648" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="16" font-weight="400" fill="#557464">可以开源，让别人复用工作方式</text>
+<rect x="651" y="526" width="534" height="166" rx="18" fill="#eaf4ee" stroke="none" />
+<text x="676" y="565" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="22" font-weight="700" fill="#244a42">DATA · 私有工作记录</text>
+<text x="676" y="604" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="17" font-weight="400" fill="#6a8075">任务 / 日志 / 输入 / 输出</text>
+<text x="676" y="648" font-family="Noto Sans CJK SC,Microsoft YaHei,Arial,sans-serif" font-size="16" font-weight="400" fill="#557464">单独备份，不随公开仓库发布</text>
+</svg>
