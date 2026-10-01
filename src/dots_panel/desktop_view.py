@@ -7,6 +7,8 @@ import argparse
 from .outputs import TaskFolderOpener, task_output_summary, output_summary_text, output_main_text
 import base64
 from .doctor import doctor_rows
+from .notifications import NotificationState
+from .native_notifications import NativeNotifications
 from .progress import task_progress, current_run, task_meaningful_updated, agent_observation
 from .app import artifact_delivery_label, verification_label, attention_items, attention_draft, artifact_kind_label, VERSION, verified_repository_url, verified_link, skill_origin_label, skill_publication_label
 from contextlib import contextmanager
@@ -542,6 +544,9 @@ class Dashboard:
         self.motion = Motion(root, reduced=prefs.get("reduced_motion") is True)
         root.bind("<Destroy>", lambda event: self.motion.cancel_all() if event.widget is root else None, add="+")
         self.snapshot, self.metric_values, self.rows = {}, {}, []
+        self.notification_state = NotificationState()
+        self.notifications = None
+        root.bind("<Destroy>", lambda event: self.notifications.close() if event.widget is root and self.notifications is not None else None, add="+")
         self.page, self.selected_task, self.timer = "overview", None, None
         self.workspace_filter = "all"
         self.selected_agent = None
@@ -622,6 +627,9 @@ class Dashboard:
         return canvas, inner
 
     def build_shell(self):
+        if getattr(self, "notifications", None) is not None:
+            self.notifications.close()
+            self.notifications = None
         self.motion.cancel_all()
         for widget in self.root.winfo_children():
             widget.destroy()
@@ -660,6 +668,8 @@ class Dashboard:
         self.footer = self.label(main, "数据来自显式登记；不读取内部会话", 13, self.muted)
         self.footer.pack(anchor="w", pady=(10, 0))
         self.render_page()
+        if hasattr(self, "notification_state"):
+            self.notifications = NativeNotifications(self, self.notification_state)
 
     def render_settings(self):
         area = self.scroll_area()
@@ -837,6 +847,8 @@ class Dashboard:
     def navigate(self, page):
         self.page, self.selected_task, self.detail_scroll = page, None, 0.0
         self.render_page()
+        if getattr(self, "notifications", None) is not None:
+            self.notifications.mark_read(page)
 
     def go_back(self, event=None):
         if self.page == "conversations" and self.selected_task:
@@ -849,6 +861,7 @@ class Dashboard:
             self.timer = None
         try:
             self.snapshot = self.store.snapshot()
+            notification_result = self.notification_state.update(self.snapshot) if hasattr(self, "notification_state") else None
             self.metric_values = self.metrics.collect()
             self.rows = task_rows(self.snapshot, time.time(), self.language)
             self.last_successful_refresh = time.time()
@@ -859,6 +872,8 @@ class Dashboard:
                 else:
                     for update in self.live_updates:
                         update()
+            if notification_result is not None and getattr(self, "notifications", None) is not None:
+                self.notifications.observe(notification_result)
         except (OSError, sqlite3.Error, ValueError, KeyError):
             self.read_error = True
         if getattr(self, "recovery_banner", None) is not None:
@@ -923,6 +938,9 @@ class Dashboard:
             self.render_settings()
         elif self.page == "about":
             self.render_about()
+        if getattr(self, "notifications", None) is not None:
+            self.notifications.badges()
+            self.notifications.canvas.tk.call("raise", self.notifications.canvas._w)
         self.rendered_page_key = (self.page, self.selected_task)
         self.last_render_signature = self.view_signature()
         focus_target = getattr(self, "more_filter_button", None) if more_focus else getattr(self, "filter_buttons", {}).get(filter_focus)
@@ -2106,6 +2124,8 @@ class Dashboard:
         if messagebox.askyesno(self.t("确认关闭此窗口？"), self.t("只关闭当前看板窗口，不会停止任务、定时任务或其他服务。可从桌面启动器重新打开。"), parent=self.root):
             if self.timer:
                 self.root.after_cancel(self.timer)
+            if getattr(self, "notifications", None) is not None:
+                self.notifications.close()
             self.root.destroy()
 
 

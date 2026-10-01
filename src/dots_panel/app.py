@@ -1100,7 +1100,7 @@ class Metrics:
 def make_server(store, port=8765):
     metrics = Metrics(store.directory)
     metrics.collect()
-    assets = {"/motion.css": ("motion.css", "text/css; charset=utf-8"), "/motion.js": ("motion.js", "text/javascript; charset=utf-8"), "/": ("index.html", "text/html; charset=utf-8"), "/style.css": ("style.css", "text/css; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"), "/i18n.js": ("i18n.js", "text/javascript; charset=utf-8"), "/workspace.js": ("workspace.js", "text/javascript; charset=utf-8")}
+    assets = {"/notifications.js": ("notifications.js", "text/javascript; charset=utf-8"), "/notifications.css": ("notifications.css", "text/css; charset=utf-8"), "/motion.css": ("motion.css", "text/css; charset=utf-8"), "/motion.js": ("motion.js", "text/javascript; charset=utf-8"), "/": ("index.html", "text/html; charset=utf-8"), "/style.css": ("style.css", "text/css; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"), "/i18n.js": ("i18n.js", "text/javascript; charset=utf-8"), "/workspace.js": ("workspace.js", "text/javascript; charset=utf-8")}
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "dots-panel"

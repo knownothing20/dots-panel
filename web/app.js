@@ -58,6 +58,7 @@ let renderedTaskId=null;
 const expandedSchedules=new Set(), expandedSoftware=new Set(), expandedSkills=new Set();
 let workspaceQuery = '';
 let lastState = null;
+const panelNotifications=typeof PanelNotifications!=='undefined'?new PanelNotifications.Controller({document,language:()=>language,openTask:id=>{const task=lastState?.tasks?.find(item=>item.id===id);if(task){selectTask(task);$('detail-scroll').focus({preventScroll:true});}}}):null;
 function element(tag, text, className) { const node = document.createElement(tag); node.textContent = text; if (className) node.className = className; return node; }
 // Preserve open evidence, focused disclosure and the visible timeline item during polling.
 function disclosure(node,store,key) {
@@ -128,6 +129,7 @@ function showPage() {
   const page=['overview','conversations','agents','schedules','software','rules','about','settings'].includes(requested)?requested:'overview';
   for(const node of document.querySelectorAll('[data-page]'))node.hidden=node.dataset.page!==page;
   for(const node of document.querySelectorAll('[data-nav]')){node.classList.toggle('active',node.dataset.nav===page);if(node.dataset.nav===page)node.setAttribute('aria-current','page');else node.removeAttribute('aria-current');}
+  panelNotifications?.markRead(page,page==='conversations'?$('task-filter').value||null:null);
 }
 function staleLabel(run){return t(run.tracking_mode==='heartbeat'?'心跳过期 · 状态待确认':'进度更新较久，执行状态待确认');}
 function registryCard(title, description, icon='▦') {
@@ -571,6 +573,7 @@ function render(state) {
   }
   if(focusedFilter)$(focusedFilter)?.focus({preventScroll:true});
   restoreView(view,selected);
+  panelNotifications?.observe(state);
 }
 function headerRegion(value) {
   if(!value||value.scope!=='panel_backend_exit'||value.provider!=='ipwho.is'||!Number.isFinite(value.checked_at)||!value.country)return phrase('后台出口：未核验','Backend exit: unverified');
@@ -591,6 +594,7 @@ async function refresh() {
 $('workspace-search').addEventListener('input',()=>{workspaceQuery=$('workspace-search').value;if(lastState)render(lastState);});
 $('workspace-filter').addEventListener('change',()=>{workspaceFilter=$('workspace-filter').value;if(lastState)render(lastState);});
 window.addEventListener('hashchange',showPage);
+for(const nav of document.querySelectorAll('[data-nav]'))nav.addEventListener('click',()=>panelNotifications?.markRead(nav.dataset.nav));
 $('back-conversations').addEventListener('click',()=>{adviceTaskId=null;$('task-filter').value='';if(lastState)render(lastState);});
 showPage();
 $('toggle-events').addEventListener('click',()=>{ const expanded=$('toggle-events').getAttribute('aria-expanded')==='true'; $('events').hidden=expanded; $('toggle-events').setAttribute('aria-expanded',String(!expanded)); $('toggle-events').textContent=phrase(expanded?'展开原始运行记录':'收起原始运行记录',expanded?'Show raw run records':'Hide raw run records'); });
