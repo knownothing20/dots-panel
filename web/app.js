@@ -19,7 +19,7 @@ function translatePage() {
   $('toggle-events').textContent=t($('toggle-events').getAttribute('aria-expanded')==='true'?'收起运行记录':'展开运行记录');
 }
 const bytes = n => n == null ? t('未知') : n >= 2**30 ? `${(n/2**30).toFixed(1)} GB` : `${(n/2**20).toFixed(0)} MB`;
-const stamp = n => n ? new Date(n * 1000).toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US', {hour12:false,timeZoneName:'shortOffset'}) : '—';
+const stamp = n => n == null ? '—' : new Date(n * 1000).toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US', {hour12:false,timeZoneName:'shortOffset'});
 const statuses = {waiting_user:'等待用户',waiting_external:'等待外部结果',paused:'已暂停记录',awaiting_review:'等待验收',pending:'待开始',running:'运行中', succeeded:'已完成', failed:'失败', cancelled:'已取消'};
 let busy = false;
 let workspaceFilter = 'all';
@@ -27,7 +27,7 @@ let adviceTaskId=null;
 let detailTab='timeline';
 const detailScrollPositions={timeline:0,files:0};
 const expandedAgents=new Set();
-const expandedSchedules=new Set(), expandedSoftware=new Set();
+const expandedSchedules=new Set(), expandedSoftware=new Set(), expandedSkills=new Set();
 let workspaceQuery = '';
 let lastState = null;
 function element(tag, text, className) { const node = document.createElement(tag); node.textContent = text; if (className) node.className = className; return node; }
@@ -75,6 +75,79 @@ function staleLabel(run){return t(run.tracking_mode==='heartbeat'?'心跳过期 
 function registryCard(title, description, icon='▦') {
   const card=element('article','','registry-card');card.append(element('span',icon,'card-icon'),element('h2',title),element('p',description));return card;
 }
+// A fetched result is evidence of an observation, never of platform scheduling.
+function scheduleResultView(item) {
+  const result=item.external_result;
+  if(!result)return null;
+  const observation=result.observation, latest=observation?.latest||{}, index=observation?.index||{}, evidence=observation?.evidence||{};
+  const unknown=phrase('未知','Unknown'), value=n=>n==null||n===''?unknown:String(n);
+  const checked=n=>typeof n==='number'&&Number.isFinite(n)?stamp(n):phrase('尚无记录','Not recorded');
+  const stale=latest.stale===true?phrase('是','Yes'):latest.stale===false?phrase('否','No'):unknown;
+  const label=observation?phrase('结果已接入 · 配置未核验','Results linked · config unverified'):phrase('暂无结果快照 · 配置未核验','No result snapshot · config unverified');
+  const compact=observation?[
+    `${phrase('最近观察尝试','Latest observed attempt')}: ${value(latest.calendar_date)} · ${value(latest.status)} · ${phrase('入选数','Selected')}: ${value(latest.selected_count)}`,
+    `${phrase('源过期标记','Source stale flag')}: ${stale} · ${phrase('已接受索引最新日期','Accepted index latest date')}: ${value(index.latest_date)}`,
+  ]:[phrase('尚无可用的外部结果快照','No usable external result snapshot')];
+  const error=result.fetch_error?`${phrase('获取失败','Fetch failed')}: ${result.fetch_error} · ${observation?phrase('保留上次成功快照','Retaining last good snapshot'):phrase('尚无成功快照','No successful snapshot')}`:'';
+  const rows=[
+    [phrase('平台配置','Platform configuration'),phrase('未核验；平台 ID、启用状态、下次执行时间均未知','Unverified; platform ID, enabled state and next due are unknown')],
+    [phrase('同步方式','Sync mode'),phrase('手动结果快照；非实时连接','Manual result snapshot; not a live connection')],
+    [phrase('最近获取检查','Last fetch check'),checked(result.checked_at)],
+    [phrase('最近成功获取','Last successful fetch'),checked(result.last_good_at)],
+  ];
+  if(observation)rows.push(
+    [phrase('最近观察尝试日期','Latest observed attempt date'),value(latest.calendar_date)],
+    [phrase('源运行编号','Source run ID'),value(latest.run_id)],
+    [phrase('源采集时间','Source collected at'),value(latest.collected_at)],
+    [phrase('源结果状态','Source result status'),value(latest.status)],
+    [phrase('入选数','Selected count'),value(latest.selected_count)],
+    [phrase('源过期标记','Source stale flag'),stale],
+    [phrase('已接受索引最新日期','Accepted index latest date'),value(index.latest_date)],
+    [phrase('索引生成时间','Index generated at'),value(index.generated_at)],
+    [phrase('索引条目数','Index entry count'),value(index.entry_count)],
+  );
+  rows.push([phrase('结果仓库','Result repository'),value(result.repository)], [phrase('来源版本','Source ref'),value(result.ref)],
+    [phrase('状态文件','Status path'),value(result.status_path)], [phrase('索引文件','Index path'),value(result.index_path)]);
+  if(observation)rows.push(['Status blob SHA',value(evidence.status_sha)],['Index blob SHA',value(evidence.index_sha)],
+    [phrase('状态来源 URL','Status source URL'),value(evidence.status_url)], [phrase('索引来源 URL','Index source URL'),value(evidence.index_url)]);
+  return {label,compact,error,rows};
+}
+function renderSchedules(schedules) {
+  const states={disconnected:'未接入',planned:'仅计划',paused:'暂停记录'};
+  $('schedule-summary').replaceChildren();
+  if(!schedules.length)$('schedule-summary').append(element('p',t('还没有登记的计划'),'empty-caption'));
+  for(const item of schedules.slice(0,3)){
+    const result=scheduleResultView(item), row=element('a','','schedule-row');row.href='#schedules';row.append(element('span','◷','small-icon'));
+    const title=element('div','');title.append(element('strong',item.name),element('small',result?.label||t(states[item.state]||item.state)));
+    if(result)title.append(element('small',result.error||result.compact[0]));
+    row.append(title,element('span','›','row-chevron'));$('schedule-summary').append(row);
+  }
+  const boundary=phrase('平台配置未核验；结果快照不证明定时器已启用','Platform configuration unverified; result snapshots do not prove schedules are enabled');
+  $('schedule-summary').append(element('p',boundary,'empty-caption'));
+  $('schedule-cards').replaceChildren();
+  if(!schedules.length)$('schedule-cards').append(registryCard(t('还没有登记的计划'),t('使用本地 CLI 登记元数据，不会自动创建定时器。')));
+  for(const item of schedules){
+    const result=scheduleResultView(item), card=element('article','','registry-card schedule-card');
+    const head=element('div','','registry-heading');
+    const title=element('h2',item.name);title.style.margin='0';title.style.overflowWrap='anywhere';
+    const badge=element('span',result?.label||t(states[item.state]||item.state),'status');badge.style.whiteSpace='normal';head.append(title,badge);card.append(head);
+    if(item.project){const project=element('small',item.project);project.style.overflowWrap='anywhere';card.append(project);}
+    if(result){
+      for(const line of result.compact){const summary=element('p',line);summary.style.margin='4px 0';summary.style.overflowWrap='anywhere';card.append(summary);}
+      if(result.error){const warning=element('p',result.error,'freshness-warning');warning.style.overflowWrap='anywhere';card.append(warning);}
+    }
+    const details=element('details','','registry-details');details.open=expandedSchedules.has(item.id);details.append(element('summary',phrase('详情','Details')));
+    details.addEventListener('toggle',()=>{if(details.open)expandedSchedules.add(item.id);else expandedSchedules.delete(item.id);});
+    const rows=result?.rows||[];
+    for(const [label,value] of rows){const line=element('p',`${label}: ${value}`);line.style.overflowWrap='anywhere';details.append(line);}
+    details.append(element('p',`${t('来源')} · ${item.source}`),
+      element('p',`${phrase('登记状态（元数据）','Registered state (metadata)')}: ${t(states[item.state]||item.state)}`),
+      element('p',`${phrase('登记计划时间（未核验）','Registered planned time (unverified)')}: ${item.next_run==null?t('未知'):stamp(item.next_run)}`),
+      element('small',`${t('最近更新')} ${stamp(item.updated)}`),element('p',phrase('登记不会创建、启动或恢复任何定时器','Registration does not create, start or resume a scheduler')));
+    card.append(details);$('schedule-cards').append(card);
+  }
+  const note=element('p',phrase('每 5 秒只刷新本地数据，不轮询 GitHub；外部结果须手动同步','Every 5 seconds refreshes local data only, without polling GitHub; external results require manual sync'),'empty-caption');note.style.gridColumn='1 / -1';$('schedule-cards').append(note);
+}
 function selectTask(task,advice=false) {adviceTaskId=advice?task.id:null;$('task-filter').value=task.id;render(lastState);location.hash='conversations';showPage();if(advice)$('advice-text').focus();}
 function taskCard(task,run,state) {
   const status=run?.status||task.latest_status||'pending';
@@ -105,20 +178,23 @@ function renderRules(data={}){
   const skillText=(item,key)=>(en&&item[key+'_en'])||item[key]||'';
   const statuses={available:en?'Observed readable':'已观察可读取',unavailable:en?'Observed unreadable':'已观察不可读取',unknown:en?'Availability unverified':'可用性未核验'};
   const versions={unverified:en?'Version unverified':'版本未核验',saved_verified:en?'Saved content checked':'已核验保存内容'};
+  const skillGrid=element('div','','skill-grid');area.append(skillGrid);
   for(const item of skills){
     const row=element('section','','skill-row'),head=element('div','','skill-heading');
     head.append(element('h3',skillText(item,'name')));
     if(safeSkillURL(item.url)){const link=element('a',en?'Manage ↗':'管理 ↗','binding-link');link.href=item.url;link.target='_blank';link.rel='noopener noreferrer';head.append(link);}
     row.append(head,element('p',skillText(item,'purpose')),element('p',(en?'When: ':'使用场景：')+skillText(item,'when_used'),'skill-caption'));
-    row.append(element('p',(en?'Manual observation · ':'人工观察 · ')+(statuses[item.status]||statuses.unknown)+' · '+stamp(item.observed_at)+' · '+(versions[item.version_status]||versions.unverified),'skill-caption'));
-    if(skillText(item,'version_note'))row.append(element('p',skillText(item,'version_note'),'skill-caption'));
+    const details=element('details','','registry-details');details.open=expandedSkills.has(item.id);details.append(element('summary',en?'Details':'详情'));
+    details.addEventListener('toggle',()=>{if(details.open)expandedSkills.add(item.id);else expandedSkills.delete(item.id);});
+    details.append(element('p',(en?'Manual observation · ':'人工观察 · ')+(statuses[item.status]||statuses.unknown)+' · '+stamp(item.observed_at)+' · '+(versions[item.version_status]||versions.unverified),'skill-caption'));
+    if(skillText(item,'version_note'))details.append(element('p',skillText(item,'version_note'),'skill-caption'));
     // Reconstructed origin presentation over retained source metadata.
     const origin=item.source||{};
     const originLabels={unknown:['来源未标记','Origin unspecified'],project_bundled:['项目配套','Project bundled'],personal:['个人规则','Personal rules'],independent:['独立 Skill','Independent Skill']};
     const publicationLabels={unknown:['发布未核验','Publication unverified'],pending:['待发布','Pending publication'],published:['已核验发布','Publication checked'],not_applicable:['不随项目发布','Not bundled for publication']};
-    row.append(element('p',(originLabels[origin.origin]||originLabels.unknown)[en?1:0]+' · '+(publicationLabels[origin.publication]||publicationLabels.unknown)[en?1:0],'skill-caption'));
+    details.append(element('p',(originLabels[origin.origin]||originLabels.unknown)[en?1:0]+' · '+(publicationLabels[origin.publication]||publicationLabels.unknown)[en?1:0],'skill-caption'));
 
-    area.append(row);
+    row.append(details);skillGrid.append(row);
   }
   if(!skills.length)area.append(element('p',en?'No user Skills registered':'尚未登记用户 Skills','empty-caption'));
   if(safeSkillURL(data.skill_url)&&!skills.some(item=>item.url===data.skill_url)){
@@ -335,21 +411,7 @@ function render(state) {
   const workspace=PanelWorkspace.rows(state.tasks,state.latest_runs||state.runs,workspaceFilter);
   if(!workspace.length)$('active-work').append(element('p',t('没有符合此状态的任务'),'empty-caption'));
   for(const {task,run} of workspace)$('active-work').append(taskCard(task,run,state));
-  const schedules=state.schedules||[];
-  $('schedule-summary').replaceChildren();
-  if(!schedules.length)$('schedule-summary').append(element('p',t('还没有登记的计划'),'empty-caption'));
-  for(const item of schedules.slice(0,3)){const row=element('a','','schedule-row');row.href='#schedules';row.append(element('span','◷','small-icon'));const title=element('div','');title.append(element('strong',item.name),element('small',t({disconnected:'未接入',planned:'仅计划',paused:'暂停记录'}[item.state]||item.state)));row.append(title,element('span','›','row-chevron'));$('schedule-summary').append(row);}
-  $('schedule-summary').append(element('p',t('已登记的计划；未接入实际调度'),'empty-caption'));
-  $('schedule-cards').replaceChildren();
-  if(!schedules.length)$('schedule-cards').append(registryCard(t('还没有登记的计划'),t('使用本地 CLI 登记元数据，不会自动创建定时器。')));
-  const scheduleState={disconnected:'未接入',planned:'仅计划',paused:'暂停记录'};
-  for(const item of schedules){
-    const card=registryCard(item.name,item.project,'◷');card.append(element('span',t(scheduleState[item.state]||item.state),'status'));
-    const details=element('details','','registry-details');details.open=expandedSchedules.has(item.id);details.append(element('summary',phrase('详情','Details')));
-    details.addEventListener('toggle',()=>{if(details.open)expandedSchedules.add(item.id);else expandedSchedules.delete(item.id);});
-    details.append(element('p',`${t('来源')} · ${item.source}`),element('p',`${t('下次时间（信息）')} · ${item.next_run?stamp(item.next_run):t('未知')}`),element('small',`${t('最近更新')} ${stamp(item.updated)}`),element('p',phrase('登记不会创建、启动或恢复任何定时器','Registration does not create, start or resume a scheduler')));
-    card.append(details);$('schedule-cards').append(card);
-  }
+  renderSchedules(state.schedules||[]);
   $('software-cards').replaceChildren();
   const software=state.software||[];
   if(!software.length)$('software-cards').append(registryCard(t('还没有登记的软件'),t('只会检查明确登记的白名单软件，不会扫描系统。')));
@@ -365,7 +427,7 @@ function render(state) {
 async function refresh() {
   if (busy) return;
   busy = true; $('refresh').disabled = true;
-  try { const response = await fetch('/api/state',{cache:'no-store',signal:AbortSignal.timeout(4000)}); if(!response.ok) throw new Error('offline'); render(await response.json()); $('connection').textContent = t('实时连接')+' · '+phrase('每 5 秒','Every 5s')+' · '+stamp(lastState?.metrics?.sampled_at); $('indicator').classList.remove('offline'); }
+  try { const response = await fetch('/api/state',{cache:'no-store',signal:AbortSignal.timeout(4000)}); if(!response.ok) throw new Error('offline'); render(await response.json()); $('connection').textContent = phrase('本地数据','Local data')+' · '+phrase('每 5 秒','Every 5s')+' · '+stamp(lastState?.metrics?.sampled_at); $('indicator').classList.remove('offline'); }
   catch (_) { $('connection').textContent = t('连接中断 · 显示上次数据'); $('indicator').classList.add('offline'); }
   finally {busy = false; $('refresh').disabled = false;}
 }
@@ -381,10 +443,10 @@ $('language').addEventListener('change',()=>{
   language=PanelLocale.resolve(preference,navigator.language);
   translatePage();
   if(lastState)render(lastState);
-  $('connection').textContent=t($('indicator').classList.contains('offline') ? '连接中断 · 显示上次数据' : lastState ? '实时连接' : '正在连接');
+  $('connection').textContent=t($('indicator').classList.contains('offline') ? '连接中断 · 显示上次数据' : lastState ? phrase('本地数据 · 每 5 秒','Local data · Every 5s') : '正在连接');
 });
 window.addEventListener('languagechange',()=>{
-  if(preference==='auto'){language=PanelLocale.resolve(preference,navigator.language);translatePage();if(lastState)render(lastState);$('connection').textContent=t($('indicator').classList.contains('offline') ? '连接中断 · 显示上次数据' : lastState ? '实时连接' : '正在连接');}
+  if(preference==='auto'){language=PanelLocale.resolve(preference,navigator.language);translatePage();if(lastState)render(lastState);$('connection').textContent=t($('indicator').classList.contains('offline') ? '连接中断 · 显示上次数据' : lastState ? phrase('本地数据 · 每 5 秒','Local data · Every 5s') : '正在连接');}
 });
 translatePage();
 $('task-filter').addEventListener('change',()=>{if(lastState)render(lastState);});

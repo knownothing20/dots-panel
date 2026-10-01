@@ -83,3 +83,44 @@ binding 的 observed_status（created / running / completed / failed / interrupt
 正式输出由 `artifact-add` 归档；`artifact-designate` 标记草稿或最终稿，`artifact-delivery` 只记录有依据的发送、打开或验收观察，不会实际发送文件。`closeout-record` 与 `closeout` 为新运行检查完成依据；历史导入记录保留原状态，并明确标识恢复来源及缺口。
 
 `doctor` 只读显示本机检查和分别登记的账户安装、定时器配置/执行观察，不会自动配置服务。
+
+## External result snapshots (read-only)
+
+`schedule-result-import SCHEDULE_ID` reads one bounded JSON observation from standard input.
+It never fetches upstream, signs in, creates a scheduler, or changes any platform task.
+The caller must first read the exact result files through an authorized connector and
+record their returned blob hashes and verified URLs. A local refresh only rereads DATA.
+
+The normalized `dots-panel.external-result.v1` envelope has exactly these fields:
+
+- `schema_version`, `repository` (`owner/repository`), `ref`, `status_path`, `index_path`
+- `checked_at`: explicit timezone ISO timestamp of the upstream check
+- `fetch_error`: null on success, otherwise a bounded sanitized error description
+- `observation`: null on failure; on success an object containing:
+  - `latest`: `calendar_date`, `run_id`, `collected_at`, `status`, `selected_count`, `stale`
+  - `index`: `generated_at`, `entry_count`, `latest_date` (null for an empty index)
+  - `evidence`: `status_sha`, `index_sha`, `status_url`, `index_url`
+
+`stale` preserves the source's explicit boolean, or null if no flag was supplied.
+Never infer that a source without a stale flag is fresh. Result dates and the local
+check timestamp remain separate. The newest attempt can be newer than the accepted
+history index; a degraded attempt may be omitted from that index by the producer.
+
+The import rejects unknown schema/fields, duplicate JSON keys, oversized input,
+unsafe repository paths/URLs, future checks, older checks, and silent reassociation.
+A failed check preserves the last good snapshot with an explicit error; invalid
+input performs no write. To record a failed fetch, provide the same reference and a
+new check timestamp with `observation:null` and a sanitized `fetch_error`.
+
+Only reference metadata and the normalized observation are saved in private DATA.
+No raw reports, credentials, platform prompts, or account IDs are imported. Successful
+result linkage is displayed separately from platform configuration, which remains
+unverified: task identity, enabled state, schedule, and next due time are unknown.
+The underlying manual registry row is preserved and is not treated as scheduler truth.
+There is no background upstream polling and no network dependency in either viewer.
+
+For reinstall/restore, retain both SOURCE and private DATA (including the SQLite
+file using a consistent stopped-service copy or SQLite backup). Restoring DATA
+restores references and observed snapshots, not the real platform task. Reinstalling
+this viewer does not overwrite, clone, create, pause or resume the platform schedule.
+A fresh installation without DATA starts without these private associations.

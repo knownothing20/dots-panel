@@ -290,11 +290,71 @@ def choose_font(families):
 
 
 def schedule_summary(schedule, language="zh"):
+    result = schedule_result_view(schedule, language)
+    if result:
+        return result["label"], result["error"] or result["compact"][0]
     states = {"disconnected": "未接入", "planned": "计划", "paused": "已暂停"}
     state = translate(states.get(schedule.get("state"), "未知"), language)
     when = schedule.get("next_run")
     timing = (translate("计划时间", language) + ": " + time.strftime("%m-%d %H:%M", time.localtime(when))) if isinstance(when, (int, float)) else translate("下次运行未知", language)
     return state, timing
+
+
+def schedule_result_view(schedule, language="zh"):
+    """Present saved evidence without inferring platform settings or source freshness."""
+    result = schedule.get("external_result")
+    if not result:
+        return None
+    en = language == "en"
+    text = lambda zh, english: english if en else zh
+    unknown = text("未知", "Unknown")
+    value = lambda item: unknown if item is None or item == "" else str(item)
+    checked = lambda item: timestamp_label(item) if isinstance(item, (int, float)) else text("尚无记录", "Not recorded")
+    observation = result.get("observation")
+    latest = (observation or {}).get("latest") or {}
+    index = (observation or {}).get("index") or {}
+    evidence = (observation or {}).get("evidence") or {}
+    stale = text("是", "Yes") if latest.get("stale") is True else text("否", "No") if latest.get("stale") is False else unknown
+    label = text("结果已接入 · 配置未核验", "Results linked · config unverified") if observation else text("暂无结果快照 · 配置未核验", "No result snapshot · config unverified")
+    compact = [
+        f"{text('最近观察尝试', 'Latest observed attempt')}: {value(latest.get('calendar_date'))} · {value(latest.get('status'))} · {text('入选数', 'Selected')}: {value(latest.get('selected_count'))}",
+        f"{text('源过期标记', 'Source stale flag')}: {stale} · {text('已接受索引最新日期', 'Accepted index latest date')}: {value(index.get('latest_date'))}",
+    ] if observation else [text("尚无可用的外部结果快照", "No usable external result snapshot")]
+    error = ""
+    if result.get("fetch_error"):
+        retention = text("保留上次成功快照", "Retaining last good snapshot") if observation else text("尚无成功快照", "No successful snapshot")
+        error = f"{text('获取失败', 'Fetch failed')}: {result['fetch_error']} · {retention}"
+    rows = [
+        (text("平台配置", "Platform configuration"), text("未核验；平台 ID、启用状态、下次执行时间均未知", "Unverified; platform ID, enabled state and next due are unknown")),
+        (text("同步方式", "Sync mode"), text("手动结果快照；非实时连接", "Manual result snapshot; not a live connection")),
+        (text("最近获取检查", "Last fetch check"), checked(result.get("checked_at"))),
+        (text("最近成功获取", "Last successful fetch"), checked(result.get("last_good_at"))),
+    ]
+    if observation:
+        rows.extend([
+            (text("最近观察尝试日期", "Latest observed attempt date"), value(latest.get("calendar_date"))),
+            (text("源运行编号", "Source run ID"), value(latest.get("run_id"))),
+            (text("源采集时间", "Source collected at"), value(latest.get("collected_at"))),
+            (text("源结果状态", "Source result status"), value(latest.get("status"))),
+            (text("入选数", "Selected count"), value(latest.get("selected_count"))),
+            (text("源过期标记", "Source stale flag"), stale),
+            (text("已接受索引最新日期", "Accepted index latest date"), value(index.get("latest_date"))),
+            (text("索引生成时间", "Index generated at"), value(index.get("generated_at"))),
+            (text("索引条目数", "Index entry count"), value(index.get("entry_count"))),
+        ])
+    rows.extend([
+        (text("结果仓库", "Result repository"), value(result.get("repository"))),
+        (text("来源版本", "Source ref"), value(result.get("ref"))),
+        (text("状态文件", "Status path"), value(result.get("status_path"))),
+        (text("索引文件", "Index path"), value(result.get("index_path"))),
+    ])
+    if observation:
+        rows.extend([
+            ("Status blob SHA", value(evidence.get("status_sha"))), ("Index blob SHA", value(evidence.get("index_sha"))),
+            (text("状态来源 URL", "Status source URL"), value(evidence.get("status_url"))),
+            (text("索引来源 URL", "Index source URL"), value(evidence.get("index_url"))),
+        ])
+    return {"label": label, "compact": compact, "error": error, "rows": rows}
 
 
 def timeline_records(snapshot, task_id):
@@ -375,7 +435,7 @@ class Dashboard:
         import tkinter.font as font
         self.font = choose_font(font.families(root))
         root.geometry("1260x850")
-        root.minsize(1000, 720)
+        root.minsize(760, 620)
         root.configure(bg=self.bg)
         try:
             root.attributes("-zoomed", True)
@@ -420,7 +480,7 @@ class Dashboard:
                     canvas.delete(shape)
             self.surface_layers(canvas, event.width, event.height)
             canvas.tag_raise(window)
-            canvas.itemconfigure(window, width=max(20, event.width-40), height=max(20, event.height-39))
+            canvas.itemconfigure(window, width=max(20, event.width-40), height=0 if getattr(canvas, "auto_fit", False) else max(20, event.height-39))
         canvas.bind("<Configure>", redraw)
         return canvas, inner
 
@@ -1061,7 +1121,8 @@ class Dashboard:
                 card.create_text(57, y+19, text=self.cut_text(state+" · "+timing, width-80, 12), anchor="w", fill=self.muted, font=(self.font, -12))
             if not records:
                 card.create_text(20, 76, text=self.t("尚未登记定时任务"), anchor="w", fill=self.muted, font=(self.font, -15))
-            card.create_text(20, 157, text=self.t("未接入调度器"), anchor="w", fill=self.muted, font=(self.font, -11))
+            boundary = "Platform configuration unverified" if self.language == "en" else "平台定时配置未核验"
+            card.create_text(20, 157, text=boundary, anchor="w", fill=self.muted, font=(self.font, -11))
         card.bind("<Configure>", draw)
         card.bind("<Button-1>", lambda event: self.navigate("schedules"))
         card.bind("<Return>", lambda event: self.navigate("schedules"))
@@ -1324,38 +1385,87 @@ class Dashboard:
             self.label(window,"Preview unavailable" if en else "无法预览",14,self.muted,raw=True).pack(padx=20,pady=20)
 
     def fit_card(self, surface, body):
-        # Recovery reconstruction of missing shared card-size helper.
+        surface.auto_fit = True
+        # Follow natural body height, including labels that rewrap on resize.
         def fit(event=None):
             if body.winfo_exists() and surface.winfo_exists():
-                surface.configure(height=body.winfo_reqheight()+40)
+                surface.configure(height=body.winfo_reqheight()+48)
         body.bind("<Configure>",fit,add="+")
         self.root.after_idle(fit)
 
 
 
 
-    def compact_row(self, parent, title, summary, status="", command=None):
-        # Reconstructed late-list prerequisite; not an original recovered block.
-        box = self.tk.Frame(parent, bg=self.panel, padx=14, pady=10, highlightthickness=1, highlightbackground="#e3ebe1")
-        box.pack(fill="x", pady=(0, 7))
-        head = self.tk.Frame(box, bg=self.panel)
-        head.pack(fill="x")
-        self.label(head, title, 16, self.fg, True, raw=True).pack(side="left", anchor="w")
+    def card_grid(self, parent, minimum=300, maximum=3):
+        """Responsive equal-width cards; resizing does not rebuild or lose focus."""
+        grid = self.tk.Frame(parent, bg=self.bg)
+        grid.pack(fill="x", anchor="n")
+        grid.card_items = []
+        grid.card_columns = 0
+        def layout(event=None):
+            width = event.width if event is not None else grid.winfo_width()
+            columns = max(1, min(maximum, (max(1, width)+14)//(minimum+14)))
+            if columns != grid.card_columns:
+                for col in range(maximum):
+                    grid.columnconfigure(col, weight=1 if col < columns else 0, uniform="cards" if col < columns else "")
+                grid.card_columns = columns
+            for index, child in enumerate(grid.card_items):
+                child.grid(row=index//columns, column=index%columns, sticky="new", padx=(0, 14 if index%columns < columns-1 else 0), pady=(0, 14))
+        grid.reflow_cards = layout
+        grid.bind("<Configure>", layout)
+        return grid
+
+    def compact_row(self, parent, title, summary, status="", command=None, avatar=None):
+        surface, box = self.card(parent, 170)
+        if hasattr(parent, "card_items"):
+            parent.card_items.append(surface)
+            parent.reflow_cards()
+        else:
+            surface.pack(fill="x", pady=(0, 8))
         if status:
-            self.label(head, status, 12, self.accent, raw=True).pack(side="right")
-        self.label(box, summary, 13, self.muted, raw=True, wrap=800).pack(anchor="w", pady=(5, 0))
+            self.label(box, status, 14, self.accent, raw=True).pack(anchor="w", fill="x", pady=(0, 8))
+        if avatar:
+            header = self.tk.Frame(box, bg=self.panel)
+            header.pack(fill="x")
+            tones = {"mint": "#dff1e5", "sky": "#dfedfa", "lavender": "#ece5f6", "peach": "#f8e7da"}
+            badge = self.tk.Canvas(header, width=36, height=36, bg=self.panel, highlightthickness=0)
+            badge.pack(side="left", padx=(0, 9))
+            badge.create_oval(0, 0, 35, 35, fill=tones.get(avatar, tones["mint"]), outline="")
+            badge.create_text(18, 18, text=title[:1], fill=self.accent, font=(self.font, -17, "bold"))
+            self.label(header, title, 20, self.fg, True, raw=True).pack(side="left", fill="x", expand=True)
+        else:
+            self.label(box, title, 20, self.fg, True, raw=True).pack(anchor="w", fill="x")
+        self.label(box, summary, 15, self.muted, raw=True).pack(anchor="w", fill="x", pady=(9, 0))
         if command:
-            for widget in (box, head, *head.winfo_children(), *box.winfo_children()):
+            self.label(box, "Open details  ›" if self.language == "en" else "查看详情  ›", 14, self.accent, raw=True).pack(anchor="w", pady=(12, 0))
+            def descendants(widget):
+                return [widget] + [item for child in widget.winfo_children() for item in descendants(child)]
+            for widget in (surface, *descendants(box)):
                 widget.configure(cursor="hand2")
                 widget.bind("<Button-1>", lambda event, action=command: action())
-            box.configure(takefocus=1)
-            box.bind("<Return>", lambda event: command())
+            surface.configure(takefocus=1, highlightcolor=self.accent)
+            surface.bind("<Return>", lambda event: command())
+            surface.bind("<space>", lambda event: command())
+            surface.bind("<FocusIn>", lambda event: surface.configure(highlightthickness=2))
+            surface.bind("<FocusOut>", lambda event: surface.configure(highlightthickness=0))
+        def wrap_children(event=None):
+            width = max(40, box.winfo_width())
+            def walk(widget):
+                for child in widget.winfo_children():
+                    if isinstance(child, self.tk.Label):
+                        child.configure(wraplength=max(40, width-45) if child.master is not box else width)
+                    else:
+                        walk(child)
+            walk(box)
+        box.bind("<Configure>", wrap_children, add="+")
+        self.fit_card(surface, box)
         return box
 
     def render_conversation_list(self, selection=()):
         self.workspace_toolbar()
         area = self.scroll_area()
         rows = workspace_rows(self.rows, self.workspace_filter, self.search_query.get())
+        grid = self.card_grid(area, minimum=370, maximum=2)
         for row in rows:
             values = row["values"]
             summary = " · ".join((values[1], values[3], self.t("最后更新：")+values[5]))
@@ -1365,7 +1475,7 @@ class Dashboard:
             summary = ("Owner: " if self.language == "en" else "负责人：") + owner_name + " · " + observed + " | " + summary
             if row["warning"]:
                 summary += "\n" + row["warning"]
-            self.compact_row(area, values[0], summary, values[2], lambda key=row["id"]: self.open_task(key))
+            self.compact_row(grid, values[0], summary, values[2], lambda key=row["id"]: self.open_task(key))
         if not rows:
             self.label(area, "该状态暂无任务", 16, self.muted).pack(anchor="w", pady=20)
 
@@ -1395,11 +1505,14 @@ class Dashboard:
                 if not grouped[key]:
                     self.label(area, "None recorded" if en else "暂无记录", 13, self.muted, raw=True).pack(anchor="w")
             return
+        grid = self.card_grid(area, minimum=285, maximum=3)
         for agent in agents:
             grouped = agent_work(self.snapshot, agent)
             counts = (f"{len(grouped['unfinished'])} unfinished · {len(grouped['recent'])} recent" if en else f"{len(grouped['unfinished'])} 项未完成 · {len(grouped['recent'])} 项近期结束")
-            summary = observation_label(agent.get("observed_at"), self.language)+" · "+counts
-            self.compact_row(area, agent_text(agent, "name", self.language), summary, agent_status_label(agent.get("status"), self.language), lambda key=agent["id"]: self.open_agent(key))
+            current = grouped["current"]
+            work = (work_type_label(current[0].get("work_type"), self.language)+" · "+current[0]["task"]["name"]) if current else ("No current work recorded" if en else "暂无当前工作记录")
+            summary = work+"\n"+counts+"\n"+observation_label(agent.get("observed_at"), self.language)
+            self.compact_row(grid, agent_text(agent, "name", self.language), summary, agent_status_label(agent.get("status"), self.language), lambda key=agent["id"]: self.open_agent(key), avatar=agent.get("avatar") or "mint")
         if not agents:
             self.label(area, "No agents registered" if en else "尚未登记 Agent", 16, self.muted, raw=True).pack(anchor="w", pady=20)
 
@@ -1414,20 +1527,28 @@ class Dashboard:
         self.render_page()
 
     def render_schedules(self):
-        # Recovery reconstruction of compact rows with persistent detail expansion.
         area = self.scroll_area()
         en = self.language == "en"
-        self.label(area, "未接入调度器", 18, self.accent, True).pack(anchor="w")
-        self.label(area, "此页仅显示元数据，不代表任务已安排或会运行", 13, self.muted).pack(anchor="w", pady=(6, 14))
+        self.label(area, "Platform configuration unverified" if en else "平台定时配置未核验", 18, self.accent, True, raw=True).pack(anchor="w")
+        self.label(area, "Saved result snapshots do not prove schedules are enabled. Every 5 seconds refreshes local data only, without polling GitHub; external results require manual sync." if en else "已保存的结果快照不证明定时器已启用。每 5 秒只刷新本地数据，不轮询 GitHub；外部结果须手动同步。", 13, self.muted, raw=True, wrap=800).pack(anchor="w", pady=(6, 14))
+        grid = self.card_grid(area, minimum=370, maximum=2)
         for record in self.snapshot.get("schedules", []):
             state, timing = schedule_summary(record, self.language)
-            box = self.compact_row(area, record["name"], timing, state)
+            result = schedule_result_view(record, self.language)
+            if result:
+                timing = "\n".join(result["compact"])
+            box = self.compact_row(grid, record["name"], timing, state)
+            if result and result["error"]:
+                self.label(box, result["error"], 14, "#9c611c", raw=True, wrap=800).pack(anchor="w", pady=(5, 0))
             expanded = record["id"] in getattr(self, "expanded_schedules", set())
             self.filter_chip(box, ("Less ⌃" if en else "收起 ⌃") if expanded else ("Details ⌄" if en else "详情 ⌄"), lambda key=record["id"]: self.toggle_registry_detail("schedules", key)).pack(anchor="e", pady=(4,0))
             if expanded:
-                for label, value in (("Project" if en else "项目",record.get("project")), ("Source" if en else "来源",record.get("source")), ("Next time (informational)" if en else "下次时间（信息）",timestamp_label(record["next_run"]) if record.get("next_run") is not None else ("Unknown" if en else "未知")), ("Last recorded update" if en else "最近登记更新",timestamp_label(record["updated"]) if record.get("updated") is not None else ("Unknown" if en else "未知"))):
-                    self.label(box,label+": "+str(value or "—"),12,self.muted,raw=True,wrap=800).pack(anchor="w",pady=3)
-                self.label(box,"Registration does not create, start or resume a scheduler" if en else "登记不会创建、启动或恢复任何定时器",12,self.muted,raw=True,wrap=800).pack(anchor="w",pady=(5,0))
+                for label, value in result["rows"] if result else []:
+                    self.label(box,label+": "+value,14,self.muted,raw=True,wrap=800).pack(anchor="w",pady=3)
+                metadata = (("Project" if en else "项目",record.get("project")), ("Source" if en else "来源",record.get("source")), ("Registered state (metadata)" if en else "登记状态（元数据）",record.get("state")), ("Registered planned time (unverified)" if en else "登记计划时间（未核验）",timestamp_label(record["next_run"]) if record.get("next_run") is not None else ("Unknown" if en else "未知")), ("Last recorded update" if en else "最近登记更新",timestamp_label(record["updated"]) if record.get("updated") is not None else ("Unknown" if en else "未知")))
+                for label, value in metadata:
+                    self.label(box,label+": "+str(value or "—"),14,self.muted,raw=True,wrap=800).pack(anchor="w",pady=3)
+                self.label(box,"Registration does not create, start or resume a scheduler" if en else "登记不会创建、启动或恢复任何定时器",14,self.muted,raw=True,wrap=800).pack(anchor="w",pady=(5,0))
         if not self.snapshot.get("schedules"):
             self.label(area, "尚未登记定时任务", 16, self.muted).pack(anchor="w", pady=18)
 
@@ -1438,21 +1559,22 @@ class Dashboard:
         records = list(self.snapshot.get("software", []))
         if not any(item.get("kind") == "dots-panel" for item in records):
             records.insert(0,{"id":"current-viewer","name":"dots-panel","description":self.t("此窗口正在运行"),"kind":"dots-panel","version":VERSION,"available":True,"controls":["close_current_viewer"]})
+        grid = self.card_grid(area, minimum=285, maximum=3)
         for record in records:
             available = record.get("available")
             state = self.t("可用" if available is True else "未检测到" if available is False else "未验证")
-            box = self.compact_row(area, record["name"], str(record.get("version") or "—"), state)
+            box = self.compact_row(grid, record["name"], str(record.get("version") or "—"), state)
             key = record.get("id", record["name"])
             expanded = key in getattr(self, "expanded_software", set())
             self.filter_chip(box,("Less ⌃" if en else "收起 ⌃") if expanded else ("Details ⌄" if en else "详情 ⌄"),lambda key=key:self.toggle_registry_detail("software",key)).pack(anchor="e",pady=(4,0))
             if expanded:
                 for label,value in (("Description" if en else "简介",record.get("description")),("Kind" if en else "类型",record.get("kind")),("Availability" if en else "可用性",state),("Version" if en else "版本",record.get("version")),("Checked" if en else "检测时间",observation_label(record.get("verified_at"),self.language))):
-                    self.label(box,label+": "+str(value or "—"),12,self.muted,raw=True,wrap=800).pack(anchor="w",pady=3)
-                self.label(box,"Detected availability is not proof of a running service" if en else "检测到可用不代表服务正在运行",12,self.muted,raw=True,wrap=800).pack(anchor="w",pady=4)
+                    self.label(box,label+": "+str(value or "—"),14,self.muted,raw=True,wrap=800).pack(anchor="w",pady=3)
+                self.label(box,"Detected availability is not proof of a running service" if en else "检测到可用不代表服务正在运行",14,self.muted,raw=True,wrap=800).pack(anchor="w",pady=4)
                 if "close_current_viewer" in record.get("controls",[]) and record.get("kind")=="dots-panel":
                     self.filter_chip(box,self.t("关闭此窗口"),self.close_viewer).pack(anchor="w",pady=(5,0))
                 else:
-                    self.label(box,"No launch/stop controls are connected" if en else "未接入启动或停止控制",12,self.muted,raw=True).pack(anchor="w",pady=4)
+                    self.label(box,"No launch/stop controls are connected" if en else "未接入启动或停止控制",14,self.muted,raw=True).pack(anchor="w",pady=4)
 
 
     def render_install_doctor(self, area, report):
@@ -1463,16 +1585,16 @@ class Dashboard:
         local, manual = doctor_rows(report, self.language)
         passed = sum(row["status"] == "ok" for row in report.get("checks", []))
         summary = (f"Local checks: {passed}/{len(local)} OK · permission probes only" if en else f"本机检查：{passed}/{len(local)} 通过 · 仅探测权限") if local else ("No diagnostics available" if en else "尚未运行检查")
-        self.label(section, summary, 12, self.muted, raw=True).pack(anchor="w", pady=(4, 5))
+        self.label(section, summary, 14, self.muted, raw=True).pack(anchor="w", pady=(4, 5))
         for title, value in manual:
-            self.label(section, title + " · " + value, 12, self.muted, raw=True).pack(anchor="w", pady=2)
+            self.label(section, title + " · " + value, 14, self.muted, raw=True).pack(anchor="w", pady=2)
         def toggle():
             self.doctor_expanded = not getattr(self, "doctor_expanded", False)
             self.render_page()
         self.filter_chip(section, ("Less ⌃" if en else "收起 ⌃") if getattr(self, "doctor_expanded", False) else ("Local check details ⌄" if en else "本机检查详情 ⌄"), toggle).pack(anchor="w", pady=(6, 3))
         if getattr(self, "doctor_expanded", False):
             for title, value in local:
-                self.label(section, title + " · " + value, 12, self.muted, raw=True).pack(anchor="w", pady=2)
+                self.label(section, title + " · " + value, 14, self.muted, raw=True).pack(anchor="w", pady=2)
             for component, observation in report.get("observations", {}).items():
                 if observation.get("evidence"):
                     when = timestamp_label(observation["observed_at"]) if observation.get("observed_at") is not None else "—"
@@ -1497,7 +1619,7 @@ class Dashboard:
         for title, value in rows:
             row = self.tk.Frame(area, bg=self.panel, highlightthickness=1, highlightbackground="#e3ebe1", padx=13, pady=11)
             row.pack(fill="x", pady=(0, 6))
-            self.label(row, title, 13, self.muted, raw=True).pack(side="left", padx=(0, 25))
+            self.label(row, title, 15, self.muted, raw=True).pack(side="left", padx=(0, 25))
             self.label(row, value, 14, self.fg, raw=True).pack(side="left")
         try:
             url = verified_repository_url(release.get("repo_url"))
@@ -1508,14 +1630,14 @@ class Dashboard:
                 import webbrowser
                 webbrowser.open(url)
             self.filter_chip(area, "GitHub project ↗" if en else "GitHub 项目 ↗", open_repository).pack(anchor="w", pady=(7, 4))
-            self.label(area, url, 12, self.muted, raw=True).pack(anchor="w", pady=(0, 9))
+            self.label(area, url, 14, self.muted, raw=True).pack(anchor="w", pady=(0, 9))
         else:
-            self.label(area, "No verified GitHub project configured" if en else "尚未登记已核验的 GitHub 项目", 12, self.muted, raw=True).pack(anchor="w", pady=8)
+            self.label(area, "No verified GitHub project configured" if en else "尚未登记已核验的 GitHub 项目", 14, self.muted, raw=True).pack(anchor="w", pady=8)
         self.label(area, "Installation notes" if en else "本安装更新说明", 17, bold=True, raw=True).pack(anchor="w", pady=(12, 7))
         for item in about.get("install_notes", []):
-            self.label(area, "• "+item.get("en" if en else "zh", ""), 13, self.muted, raw=True, wrap=800).pack(anchor="w", pady=4)
+            self.label(area, "• "+item.get("en" if en else "zh", ""), 15, self.muted, raw=True, wrap=800).pack(anchor="w", pady=4)
         note = "Local version is not remote release status. These are manually verified observations, not live checks. This page does not update, publish, or use credentials." if en else "本地版本不等于远端发布状态。此处是人工核验记录，不是实时查询；本页不更新安装、不发布代码、不使用凭据。"
-        self.label(area, note, 12, self.muted, raw=True, wrap=800).pack(anchor="w", pady=(15, 5))
+        self.label(area, note, 14, self.muted, raw=True, wrap=800).pack(anchor="w", pady=(15, 5))
 
 
     def render_rules(self):
@@ -1526,35 +1648,35 @@ class Dashboard:
         levels = {"enforced": ("程序校验", "App enforced"), "workflow": ("执行约定", "Workflow"), "planned": ("待落地", "Planned")}
         self.label(area, ("Rules version · " if en else "规则版本 · ") + data.get("version", "—"), 14, self.accent, raw=True).pack(anchor="w", pady=(0, 6))
         note = "App enforced: checked by existing panel operations. Workflow: followed by the executor. Planned: not implemented. These guidelines do not grant permissions." if en else "程序校验：现有面板操作已实施检查；执行约定：由执行者遵循；待落地：尚未实现。规则本身不授予权限。"
-        self.label(area, note, 12, self.muted, raw=True, wrap=830).pack(anchor="w", pady=(0, 12))
+        self.label(area, note, 14, self.muted, raw=True, wrap=830).pack(anchor="w", pady=(0, 12))
         self.label(area, "Your installed Skills" if en else "用户安装的 Skills", 16, self.fg, True, raw=True).pack(anchor="w", pady=(0, 4))
-        self.label(area, "Manually recorded summaries · no automatic sync or guaranteed activation" if en else "人工登记的用途摘要 · 不自动同步，不保证每次触发", 12, self.muted, raw=True, wrap=830).pack(anchor="w", pady=(0, 8))
+        self.label(area, "Manually recorded summaries · no automatic sync or guaranteed activation" if en else "人工登记的用途摘要 · 不自动同步，不保证每次触发", 14, self.muted, raw=True, wrap=830).pack(anchor="w", pady=(0, 8))
         skills = [item for item in data.get("skills", []) if item.get("scope") == "user_installed"]
+        grid = self.card_grid(area, minimum=300, maximum=3)
         for item in skills:
-            box = self.tk.Frame(area, bg=self.panel, highlightthickness=1, highlightbackground="#e3ebe1", padx=12, pady=8)
-            box.pack(fill="x", pady=(0, 7))
-            head = self.tk.Frame(box, bg=self.panel)
-            head.pack(fill="x")
-            self.label(head, agent_text(item, "name", language), 14, self.fg, True, raw=True).pack(side="left")
+            key = item.get("id", item["name"])
             source = item.get("source", {})
-            self.label(box, skill_origin_label(source.get("origin"), language)+" · "+skill_publication_label(source.get("publication"), language), 11, self.muted, raw=True).pack(anchor="w")
-            try:
-                url = verified_skill_url(item.get("url"))
-            except ValueError:
-                url = None
-            if url:
-                def open_skill(target=url):
-                    import webbrowser
-                    webbrowser.open(target)
-                self.filter_chip(head, "Manage ↗" if en else "管理 ↗", open_skill).pack(side="right")
-            self.label(box, agent_text(item, "purpose", language), 13, self.fg, raw=True, wrap=810).pack(anchor="w", pady=(4, 2))
-            self.label(box, ("When: " if en else "使用场景：") + agent_text(item, "when_used", language), 12, self.muted, raw=True, wrap=810).pack(anchor="w")
-            observation = ("Manual observation · " if en else "人工观察 · ") + skill_status_label(item.get("status"), language) + " · " + timestamp_label(item.get("observed_at")) + " · " + skill_version_label(item.get("version_status"), language)
-            self.label(box, observation, 11, self.muted, raw=True, wrap=810).pack(anchor="w", pady=(4, 0))
-            if item.get("version_note") or item.get("version_note_en"):
-                self.label(box, agent_text(item, "version_note", language), 11, self.muted, raw=True, wrap=810).pack(anchor="w")
+            box = self.compact_row(grid, agent_text(item, "name", language), agent_text(item, "purpose", language), skill_status_label(item.get("status"), language))
+            expanded = key in getattr(self, "expanded_skills", set())
+            self.filter_chip(box, ("Less ⌃" if en else "收起 ⌃") if expanded else ("Details ⌄" if en else "详情 ⌄"), lambda key=key: self.toggle_registry_detail("skills", key)).pack(anchor="w", pady=(12, 0))
+            if expanded:
+                self.label(box, skill_origin_label(source.get("origin"), language)+" · "+skill_publication_label(source.get("publication"), language), 14, self.muted, raw=True).pack(anchor="w", fill="x", pady=(8, 0))
+                self.label(box, ("When: " if en else "使用场景：") + agent_text(item, "when_used", language), 15, self.fg, raw=True).pack(anchor="w", fill="x", pady=(8, 0))
+                observation = ("Manual observation · " if en else "人工观察 · ") + timestamp_label(item.get("observed_at")) + " · " + skill_version_label(item.get("version_status"), language)
+                self.label(box, observation, 14, self.muted, raw=True).pack(anchor="w", fill="x", pady=(8, 0))
+                if item.get("version_note") or item.get("version_note_en"):
+                    self.label(box, agent_text(item, "version_note", language), 14, self.muted, raw=True).pack(anchor="w", fill="x")
+                try:
+                    url = verified_skill_url(item.get("url"))
+                except ValueError:
+                    url = None
+                if url:
+                    def open_skill(target=url):
+                        import webbrowser
+                        webbrowser.open(target)
+                    self.filter_chip(box, "Manage ↗" if en else "管理 ↗", open_skill).pack(anchor="w", pady=(8, 0))
         if not skills:
-            self.label(area, "No user Skills registered" if en else "尚未登记用户 Skills", 12, self.muted, raw=True).pack(anchor="w", pady=(0, 8))
+            self.label(area, "No user Skills registered" if en else "尚未登记用户 Skills", 14, self.muted, raw=True).pack(anchor="w", pady=(0, 8))
         # Preserve old explicit links without inventing a catalog record from them.
         if not any(item.get("url") == data.get("skill_url") for item in skills):
             try:
@@ -1583,8 +1705,8 @@ class Dashboard:
             for rule in group["items"]:
                 level = levels.get(rule["level"], levels["planned"])[1 if en else 0]
                 self.label(body, level + " · " + rule["title"][language], 14, self.accent, True, raw=True).pack(anchor="w", pady=(9, 3))
-                self.label(body, rule["body"][language], 13, self.fg, raw=True, wrap=810).pack(anchor="w", pady=(0, 7))
-        self.label(area, "Source: packaged project_rules.json · read-only" if en else "统一来源：项目 project_rules.json · 只读展示", 12, self.muted, raw=True).pack(anchor="w", pady=10)
+                self.label(body, rule["body"][language], 15, self.fg, raw=True, wrap=810).pack(anchor="w", pady=(0, 7))
+        self.label(area, "Source: packaged project_rules.json · read-only" if en else "统一来源：项目 project_rules.json · 只读展示", 14, self.muted, raw=True).pack(anchor="w", pady=10)
 
     def close_viewer(self):
         from tkinter import messagebox

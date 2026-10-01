@@ -1,0 +1,20 @@
+'use strict';
+// CSS contracts are intentionally separate from browser visual QA.
+const fs=require('node:fs'),assert=require('node:assert/strict');
+const css=fs.readFileSync('web/style.css','utf8');
+const app=fs.readFileSync('web/app.js','utf8');
+const design=css.slice(css.indexOf('/* Responsive card system:'));
+assert(design.includes('.task-grid,#task-list.task-grid,#agent-cards,.registry-grid,.skill-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))'));
+assert(design.includes('@media(min-width:1280px){#agent-cards,#software-cards,.skill-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}'));
+const mobile=design.slice(design.indexOf('@media(max-width:720px)'));
+assert(mobile.includes('.task-grid,#task-list.task-grid,#agent-cards,.registry-grid,.skill-grid{grid-template-columns:1fr'));
+assert(!app.includes("$('schedule-cards').style.gridTemplateColumns"),'No forced single-column schedule layout');
+assert(!css.includes('#task-list.task-grid{display:flex;flex-direction:column'),'Activities no longer forced into rows');
+assert(design.includes('min-width:0'));
+assert(design.includes('overflow-wrap:anywhere'));
+assert(design.includes('font-size:15px'));
+assert(design.includes('.agent-details summary:focus-visible,.registry-details summary:focus-visible'));
+assert(!design.includes('.events{display:grid'),'Timeline stays linear');
+assert(!design.includes('.detail-scroll{'),'Timeline scroll behavior remains intact');
+assert(design.includes('@supports not (backdrop-filter:blur(1px))'));
+console.log('Responsive card contracts: desktop/medium/mobile grids, readable fonts, wrapping, disclosure focus, timeline preservation and opaque fallback passed');

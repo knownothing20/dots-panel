@@ -10,7 +10,8 @@ class ReconstructedCompactTests(unittest.TestCase):
         self.assertIn("PanelWorkspace.rows(state.tasks,state.latest_runs||state.runs,workspaceFilter)",js)
     def test_activity_cards_are_compact_css(self):
         css=(ROOT/'web/style.css').read_text()
-        self.assertIn('#task-list.task-grid{display:flex;flex-direction:column',css)
+        self.assertIn('.task-grid,#task-list.task-grid,#agent-cards,.registry-grid,.skill-grid{display:grid;',css)
+        self.assertNotIn('#task-list.task-grid{display:flex;flex-direction:column',css)
     def test_all_seven_navigation_destinations(self):
         html=(ROOT/'web/index.html').read_text()
         for page in ('overview','conversations','agents','schedules','software','rules','about'):

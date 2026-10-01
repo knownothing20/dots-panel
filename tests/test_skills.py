@@ -110,12 +110,16 @@ class SkillCatalogTests(unittest.TestCase):
         widget = lambda *a, **k: SimpleNamespace(pack=lambda **kw: None, pack_forget=lambda: None)
         viewer.tk = SimpleNamespace(Frame=widget)
         viewer.scroll_area = widget
+        viewer.card_grid = lambda *a, **kw: widget()
+        viewer.expanded_skills = {"example", "second"}
         labels, buttons = [], []
         viewer.label = lambda parent, caption, *a, **kw: (labels.append(caption) or widget())
         viewer.filter_chip = lambda parent, caption, action: (buttons.append((caption, action)) or widget())
         self.write(url='https://chatgpt.com/skills?skill_id=example-first')
         row = self.store.snapshot()['rules']['skills'][0]
         viewer.snapshot = {'rules': {'skills': [row, dict(row, id='second', url='https://chatgpt.com/skills?skill_id=example-second'), dict(row, scope='system', name_en='Excluded')]}}
+        viewer.expanded_skills = {row["id"], "second"}
+        viewer.compact_row = lambda parent, title, summary, status: (labels.extend([title, summary, status]) or widget())
         viewer.render_rules()
         self.assertNotIn('Excluded', labels)
         self.assertIn('Example purpose', labels)
@@ -128,4 +132,4 @@ class SkillCatalogTests(unittest.TestCase):
         labels.clear(); buttons.clear()
         viewer.snapshot = {'rules': {'skills': [dict(row, url='javascript:alert(1)')]}}
         viewer.render_rules()
-        self.assertFalse(buttons)
+        self.assertFalse([caption for caption, action in buttons if caption == "Manage ↗"])

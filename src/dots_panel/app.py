@@ -2,6 +2,7 @@
 import argparse
 from .doctor import install_doctor, COMPONENTS, OBSERVATION_STATES
 from . import VERSION
+from .result_links import TABLE_SQL, MAX_IMPORT_BYTES, decode_import, import_result, attach_results
 import errno
 import hashlib
 from datetime import datetime, timezone
@@ -349,6 +350,7 @@ class Store(RecoveryStoreMixin):
               id INTEGER PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),
               created REAL NOT NULL, message TEXT NOT NULL);
             """)
+            db.execute(TABLE_SQL)
             run_columns = {row[1] for row in db.execute("PRAGMA table_info(runs)")}
             for field in ("lifecycle_reason", "next_step", "lifecycle_evidence"):
                 if field not in run_columns:
@@ -543,6 +545,10 @@ class Store(RecoveryStoreMixin):
         with self.connect() as db:
             db.execute("INSERT INTO schedules VALUES(?,?,?,?,?,?,?,?)", (key, text(name, 120), text(project, 120), text(source, 120), state, next_run, now, now))
         return key
+
+    def schedule_result_import(self, key, value):
+        with self.connect() as db:
+            return import_result(db, key, value)
 
     def software_register(self, key, name, description, kind):
         if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", key):
@@ -921,6 +927,7 @@ class Store(RecoveryStoreMixin):
             activity = [dict(r) for r in db.execute("SELECT * FROM activity ORDER BY created DESC, id DESC LIMIT 100")]
             bindings = [dict(r) for r in db.execute("SELECT * FROM task_bindings ORDER BY synced_at DESC LIMIT 500")]
             schedules = [dict(r) for r in db.execute("SELECT * FROM schedules ORDER BY created DESC LIMIT 500")]
+            attach_results(db, schedules)
             tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             rules_row = db.execute("SELECT skill_url FROM rules_config WHERE id=1").fetchone() if "rules_config" in tables else None
             rules = project_rules()
@@ -1116,6 +1123,8 @@ def main():
     ingest.add_argument("--state", choices=("planned", "in_progress", "verified"), required=True)
     ingest.add_argument("--observed-at", required=True)
     ingest.add_argument("--observed-status", choices=OBSERVED_STATUSES)
+    result_import = subs.add_parser("schedule-result-import", help="Import a bounded, explicit result observation from stdin; no upstream fetch or scheduler change")
+    result_import.add_argument("id")
     schedule = subs.add_parser("schedule-register", help="Record metadata only; never creates or starts a scheduler")
     schedule.add_argument("id")
     schedule.add_argument("--name", required=True)
@@ -1231,6 +1240,9 @@ def main():
             print(store.bind(args.task_id, args.source_type, args.thread_id, args.environment_kind, args.environment_id, args.observed_status, args.observed_at, args.url))
         elif args.command == "ingest":
             print(json.dumps(store.ingest(args.task_id, args.source_event_id, args.role, args.stage, args.state, args.message, args.observed_at, args.observed_status)))
+        elif args.command == "schedule-result-import":
+            value = decode_import(sys.stdin.buffer.read(MAX_IMPORT_BYTES + 1))
+            print(json.dumps(store.schedule_result_import(args.id, value), ensure_ascii=False))
         elif args.command == "schedule-register":
             next_run = None
             if args.next_run:
