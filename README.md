@@ -4,10 +4,6 @@
 
 一个轻量、私有、可自行安装的本地工作面板。支持原生桌面与可选 Web 视图，使用 Python 标准库，不依赖 npm、Docker 或云数据库。
 
-![dots panel 产品概览](docs/images/cover.png)
-
-*设计示意 / 示例数据，非实时截图。*
-
 Python 3.10+ · SQLite · Tkinter · 中文 / English · MIT
 
 [快速开始](#快速开始) · [配套工作流 Skill](#配套工作流-skill) · [安装指南](docs/install.md) · [任务接入](docs/task-integration.md) · [隐私边界](docs/privacy.md)
@@ -25,10 +21,6 @@ Python 3.10+ · SQLite · Tkinter · 中文 / English · MIT
 它是主动登记的工作记录，不是自动执行器，也不会把面板卡片冒充真实平台会话。
 
 ## 七个页面，各有分工
-
-![dots panel 功能分区](docs/images/features.png)
-
-*设计示意 / 示例数据，非实时截图。*
 
 | 页面 | 能看到什么 |
 | --- | --- |
@@ -101,10 +93,6 @@ python3 "$SOURCE/scripts/workflow-skill.py" --export /absolute/path/to/new-workf
 详见 [Skill 安装与验收](docs/workflow-skill.md)。若目标产品没有受支持的安装入口，保留“源码可用、账户安装未核验”，不要伪装已完成。
 
 ## 从任务到交付
-
-![任务生命周期与交付流程](docs/images/workflow.png)
-
-*设计示意 / 示例数据，非实时截图。*
 
 下面只演示显式 CLI 记录。请在独立测试 DATA 中试跑，不要把示例写入正式任务库：
 
