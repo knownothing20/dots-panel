@@ -18,10 +18,23 @@ Keep maintained source projects in their own confirmed project directory. For on
 3. Treat a genuinely separate goal or an explicit request for a separate activity as a new activity. Creating a panel record alone does not create a real execution session.
 4. Read the current supported environment and task-tool descriptions. Use [references/tool-contract.md](references/tool-contract.md) for the verified baseline and failure handling. Respect the user's chosen environment and cost constraints. Do not substitute a computer or executor without authorization.
 
-## Create or reuse a real session
+## Delegate and register before long work
+
+For a new development, research or deliverable goal, briefly acknowledge the outcome and delegate through an actually available supported execution tool. In the assistant's authorized cloud environment, use a real native worker when supported; do not require a desktop or saved environment for that route. For a user-selected desktop, Remote or saved coding environment, use its supported durable-task route. Reuse the executor for continuing the same assignment where supported. Ordinary conversation does not require a task.
+
+Immediately after real dispatch, before lengthy implementation:
+1. Reuse the matching goal activity or register a genuinely new goal, then start or continue its appropriate run. A finished run stays finished; continued work uses a new run in the same activity.
+2. Register a friendly panel profile using a stable panel-local key, never a runtime path or fabricated platform thread ID. A profile records a person-readable executor observation, not an independent conversation.
+3. Observe the real returned or queried state: running only after confirmed execution, unknown for pending initialization, and idle after a turn ends. Record the observation time and manual source in plain language.
+4. Associate each participant with the concrete run using `agent-run-assign`. Several participants may share a run, and several runs may share an activity. Preserve an existing primary owner; do not replace it merely to display another participant.
+5. Read the panel state back and verify the activity, run and participant appear. If recording fails, fix registration without dispatching duplicate workers. Tell the user about any visible tracking gap.
+
+Keep native worker identities in the authorized coordination context only. Never copy their raw identifiers, transcripts, private instructions or hidden reasoning into panel profiles, timelines or portable source. Bind a platform conversation only when an actual persisted thread ID was returned. The absence of such a binding does not mean no work occurred.
+
+## Create or reuse a durable session when applicable
 
 - For an existing binding, use its actual thread ID with supported read and message tools. Continue the same session for all stages. Do not create a fresh session merely because a stage changed or another message arrived.
-- For a new goal, discover eligible connected computers/remotes and saved coding environments. Select only an available, authorized environment that satisfies the request. If none fits, report the concrete session-creation blocker. Continue only through an already authorized and supported execution route; otherwise ask the user to choose an available route. Do not describe an internal worker or the current assistant's executor as a separately created, user-visible platform conversation.
+- For a new goal requiring a durable external execution environment, discover eligible connected computers/remotes and saved coding environments. Select only an available, authorized environment that satisfies the request. If none fits, report the concrete session-creation blocker. Continue only through an already authorized and supported execution route; otherwise ask the user to choose an available route. Do not describe an internal worker or the current assistant's executor as a separately created, user-visible platform conversation.
 - When that supported creation route is available and authorized, create exactly one persistent task using the public supported creation tool. Give it the goal, relevant source context, scope, deliverables, and verification criteria. Include only information appropriate for a user-visible task conversation.
 - Record the actual returned thread ID and confirmed environment selector immediately. A request accepted for execution can still be starting; record that distinction. If creation has an uncertain outcome, inspect supported task listings before any retry. Never blindly create a duplicate.
 - After successful session creation, create or select the panel activity and bind it to that returned thread ID. If panel writing fails, retain the verified identity in the authorized task context and retry only the panel update; do not create another execution session.
@@ -39,6 +52,9 @@ Keep maintained source projects in their own confirmed project directory. For on
 Read [references/task-files.md](references/task-files.md) before producing reports, images or other user-facing files. Resolve the existing task and its private folder first; use the same folder for every stage. Verify each deliverable, register it through the installed panel's supported file command, and confirm that its task file list contains it before claiming it is archived. A temporary file or a chat message alone is not a registered deliverable. Preserve Library identity and use the current Library workflow when delivery in chat requires an attachment.
 
 ## Keep the timeline accurate
+
+At meaningful milestones, refresh the actual executor observation and record the result on its existing goal/run. Do not wait until delivery to register work. When the worker ends, inspect its outcome, record idle separately, and keep the task open if approval, an external result or unfinished scope remains. Parent coordination remains responsible for goal-level closeout. Never treat the latest completed run as proof that all parallel runs are complete.
+
 
 Read [references/tool-contract.md](references/tool-contract.md) before binding or ingesting events. Configure the installed panel CLI and its private data directory explicitly; do not guess account paths, URLs, session IDs, or credentials.
 
@@ -58,4 +74,4 @@ Read [references/tool-contract.md](references/tool-contract.md) before binding o
 
 ## Close out or wait honestly
 
-Use [references/closeout.md](references/closeout.md) for the shared completion checklist, waiting states and optional hourly monitoring setup. This bundled source is the authoritative project workflow; importing it into an account is a separate, explicit installation step. Do not claim account installation, loading or monitoring merely because these files exist.
+Use [references/closeout.md](references/closeout.md) for the shared completion checklist, waiting states and optional hourly monitoring setup. Skill availability, loading for a turn, actual delegation, panel registration and automatic scheduling are separate checks. Do not promise guaranteed triggering or global enforcement. This bundled source is the authoritative project workflow; importing it into an account is a separate, explicit installation step. Do not claim account installation, loading or monitoring merely because these files exist.

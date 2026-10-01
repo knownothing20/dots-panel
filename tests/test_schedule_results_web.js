@@ -35,7 +35,7 @@ for(const lang of ['en','zh']){
  assert.equal(rows[lang==='en'?'Accepted index latest date':'已接受索引最新日期'],'2000-01-02');
  assert.equal(rows[lang==='en'?'Last fetch check':'最近获取检查'],stamp(200));
  assert.equal(rows[lang==='en'?'Last successful fetch':'最近成功获取'],stamp(100));
- assert.equal(rows[lang==='en'?'Source collected at':'源采集时间'],'2000-01-03T08:00:00+08:00');
+ assert.equal(rows[lang==='en'?'Source collected at':'源采集时间'],stamp('2000-01-03T08:00:00+08:00'));
  assert(rows[lang==='en'?'Platform configuration':'平台配置'].includes(lang==='en'?'platform ID, enabled state and next due are unknown':'平台 ID、启用状态、下次执行时间均未知'));
  renderSchedules([item]);
  let card=$('schedule-cards').children[0],detail=card.children.find(node=>node.tag==='details');

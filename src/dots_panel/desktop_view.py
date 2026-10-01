@@ -3,6 +3,7 @@
 Task database access is read-only; only UI language preferences are written.
 """
 import argparse
+from .outputs import TaskFolderOpener, task_output_summary, output_summary_text, output_main_text
 import base64
 from .doctor import doctor_rows
 from .app import artifact_delivery_label, verification_label, attention_items, attention_draft, artifact_kind_label, VERSION, verified_repository_url, verified_link, skill_origin_label, skill_publication_label
@@ -15,14 +16,30 @@ import stat
 import uuid
 import sys
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+DEFAULT_TIMEZONE = "Asia/Shanghai"
+COMMON_TIMEZONES = ("Asia/Shanghai", "UTC", "America/Los_Angeles", "America/New_York", "Europe/London", "Europe/Paris", "Asia/Tokyo", "Asia/Singapore", "Australia/Sydney")
+
+def validate_timezone(value):
+    if not isinstance(value, str) or not value or len(value) > 128:
+        raise ValueError("Invalid IANA timezone")
+    try:
+        ZoneInfo(value)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise ValueError("Unsupported IANA timezone: " + value) from exc
+    return value
+
+from .motion import Motion
 
 from .app import (Metrics, Store, ROOT, default_data_dir, agent_text, agent_work, work_type_label,
                   verified_skill_url, skill_status_label, skill_version_label)
 
 STATUS = {"waiting_user": "等待用户", "waiting_external": "等待外部结果", "paused": "已暂停记录", "awaiting_review": "等待验收", "running": "进行中", "succeeded": "已完成", "failed": "失败", "cancelled": "已取消", "pending": "待开始"}
 STATES = {"unknown": "历史状态未保留","planned": "计划", "in_progress": "进行中", "verified": "已验证"}
-PAGE_NAMES = {"overview": "概览", "conversations": "活动", "agents": "Agent", "schedules": "定时任务", "software": "软件", "rules": "规则", "about": "关于与版本"}
-EN = {"已登记活动与工作记录；执行会话绑定情况见详情": "Registered activities and work records; see details for execution-session bindings","关于与版本": "About & version", "↻ 刷新": "↻ Refresh", "每 5 秒 · 最近刷新": "Every 5s · Last refreshed", "尚未刷新": "Not refreshed yet","历史状态未保留": "Historical state unavailable", "recovered_summary": "Recovered summary","等待用户": "Waiting for user", "等待外部结果": "Waiting for external result", "已暂停记录": "Recorded as paused", "等待验收": "Awaiting review",
+PAGE_NAMES = {"overview": "概览", "conversations": "活动", "agents": "Agent", "schedules": "定时任务", "software": "软件", "rules": "规则", "about": "关于与版本", "settings": "设置"}
+EN = {"设置": "Settings", "语言": "Language", "显示时区": "Display timezone", "应用时区": "Apply timezone", "默认北京时间；支持 IANA 时区。仅调整显示，不改变系统时间或任务调度。": "Beijing time by default; supports IANA timezones. Display only; system time and task schedules stay unchanged.", "设置保存在本机": "Settings are saved locally", "无效或不支持的 IANA 时区": "Invalid or unsupported IANA timezone", "未保存偏好；当前仅本次有效": "Preferences not saved; applied for this session only","已登记活动与工作记录；执行会话绑定情况见详情": "Registered activities and work records; see details for execution-session bindings","关于与版本": "About & version", "↻ 刷新": "↻ Refresh", "每 5 秒 · 最近刷新": "Every 5s · Last refreshed", "尚未刷新": "Not refreshed yet","历史状态未保留": "Historical state unavailable", "recovered_summary": "Recovered summary","等待用户": "Waiting for user", "等待外部结果": "Waiting for external result", "已暂停记录": "Recorded as paused", "等待验收": "Awaiting review",
 
     "进行中 / 已完成 · {count} 个任务": "Running / done · {count} tasks",
     "容器配额 {quota}": "Container quota: {quota}",
@@ -108,10 +125,10 @@ def agent_status_label(value, language="zh"):
     return labels.get(value, labels["unknown"])[language == "en"]
 
 
-def observation_label(value, language="zh"):
+def observation_label(value, language="zh", timezone=DEFAULT_TIMEZONE):
     if not isinstance(value, (int, float)):
         return "观察时间未知" if language != "en" else "Observation time unknown"
-    return ("最后观察：" if language != "en" else "Last observed: ")+timestamp_label(value)
+    return ("最后观察：" if language != "en" else "Last observed: ")+timestamp_label(value, timezone)
 
 
 def resolve_language(choice="auto", environ=None):
@@ -126,27 +143,45 @@ def translate(value, language="zh", **variables):
     return (EN.get(value, value) if language == "en" else value).format(**variables) if variables else (EN.get(value, value) if language == "en" else value)
 
 
-def load_language(directory):
+def load_preferences(directory):
     config = Path(directory) / "config"
     try:
         if config.is_symlink():
-            return "auto"
+            return {}
         parent = os.open(config, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
             fd = os.open("ui.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
             with os.fdopen(fd, "r", encoding="utf-8") as handle:
                 if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
-                    return "auto"
+                    return {}
                 content = json.loads(handle.read(4097))
-                value = content.get("language") if isinstance(content, dict) else None
-                return value if value in ("auto", "zh", "en") else "auto"
+                return content if isinstance(content, dict) else {}
         finally:
             os.close(parent)
+    except FileNotFoundError:
+        return {}
     except (OSError, ValueError, UnicodeError):
-        return "auto"
+        return {"_read_error": True}
 
+
+def load_language(directory):
+    value = load_preferences(directory).get("language")
+    return value if value in ("auto", "zh", "en") else "auto"
 
 def save_language(directory, language):
+    save_preferences(directory, language=language)
+
+def save_preferences(directory, language=None, timezone=None, reduced_motion=None):
+    content = load_preferences(directory)
+    if content.pop("_read_error", False):
+        raise ValueError("Cannot safely read existing preferences")
+    if reduced_motion is not None:
+        if not isinstance(reduced_motion, bool):
+            raise ValueError("Invalid reduced-motion preference")
+        content["reduced_motion"] = reduced_motion
+    language = language if language is not None else content.get("language", "auto")
+    if timezone is not None:
+        content["timezone"] = validate_timezone(timezone)
     if language not in ("auto", "zh", "en"):
         raise ValueError("Invalid UI language")
     directory = Path(directory).expanduser().resolve()
@@ -166,7 +201,8 @@ def save_language(directory, language):
             pass
         fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump({"language": language}, handle)
+            content["language"] = language
+            json.dump(content, handle)
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
@@ -240,14 +276,14 @@ def assigned_agent(snapshot, task_id):
     return next((item for item in snapshot.get("agents",[]) if assignment and item["id"]==assignment["agent_id"]),None)
 
 
-def binding_summary(snapshot, task_id, language="zh"):
+def binding_summary(snapshot, task_id, language="zh", timezone=DEFAULT_TIMEZONE):
     # Recovery reconstruction; uses retained safe URL validator, never invents a link.
     en=language=="en"
     item=next((row for row in snapshot.get("bindings",[]) if row["task_id"]==task_id),None)
     if not item:return {"title":"Platform chat: not linked" if en else "平台独立聊天：未绑定","lines":[],"url":None}
     try:url=verified_link(item.get("verified_url")) if item.get("verified_url") else None
     except ValueError:url=None
-    return {"title":"Session binding recorded" if en else "已登记会话绑定","lines":[str(item.get("observed_status","unknown")),timestamp_label(item["observed_at"]),"Manual observation; not live" if en else "手动观察，非实时连接"],"url":url}
+    return {"title":"Session binding recorded" if en else "已登记会话绑定","lines":[str(item.get("observed_status","unknown")),timestamp_label(item["observed_at"], timezone),"Manual observation; not live" if en else "手动观察，非实时连接"],"url":url}
 
 
 def task_rows(snapshot, now, language="zh"):
@@ -289,18 +325,39 @@ def choose_font(families):
     return next((name for name in families if "cjk" in name.casefold()), "sans-serif")
 
 
-def schedule_summary(schedule, language="zh"):
-    result = schedule_result_view(schedule, language)
+def schedule_summary(schedule, language="zh", timezone=DEFAULT_TIMEZONE):
+    platform = schedule_platform_view(schedule, language, timezone)
+    if platform:
+        return platform["label"], platform["compact"]
+    result = schedule_result_view(schedule, language, timezone)
     if result:
         return result["label"], result["error"] or result["compact"][0]
     states = {"disconnected": "未接入", "planned": "计划", "paused": "已暂停"}
     state = translate(states.get(schedule.get("state"), "未知"), language)
     when = schedule.get("next_run")
-    timing = (translate("计划时间", language) + ": " + time.strftime("%m-%d %H:%M", time.localtime(when))) if isinstance(when, (int, float)) else translate("下次运行未知", language)
+    timing = (translate("计划时间", language) + ": " + timestamp_label(when, timezone)) if isinstance(when, (int, float)) else translate("下次运行未知", language)
     return state, timing
 
 
-def schedule_result_view(schedule, language="zh"):
+def schedule_platform_view(schedule, language="zh", timezone=DEFAULT_TIMEZONE):
+    item = schedule.get("platform_observation")
+    if not item:
+        return None
+    text = lambda zh, en: en if language == "en" else zh
+    unknown = text("未知", "Unknown")
+    enabled = text("已启用", "Enabled") if item.get("enabled") is True else text("已停用", "Disabled") if item.get("enabled") is False else unknown
+    rows = [(text("平台", "Platform"), item.get("platform") or unknown), (text("平台任务 ID", "Platform task ID"), item.get("task_id") or unknown), (text("已观察启用状态", "Observed enabled state"), enabled), (text("调度时区", "Schedule timezone"), item.get("timezone") or unknown), (text("计划", "Schedule"), item.get("schedule") or unknown), (text("定时方式", "Timing mode"), item.get("timing_mode") or unknown), (text("上次运行", "Last run"), timestamp_label(item["last_run_at"], timezone) if item.get("last_run_at") else unknown), (text("下次运行", "Next run"), timestamp_label(item["next_run_at"], timezone) if item.get("next_run_at") else unknown), (text("平台观察时间", "Platform observed at"), timestamp_label(item.get("observed_at"), timezone)), (text("首次定时执行", "First scheduled execution"), text("尚未核验", "Not yet verified"))]
+    rule = str(item.get("schedule") or "")
+    parts = dict(part.split("=", 1) for line in rule.splitlines() if line.startswith("RRULE:") for part in line[6:].split(";") if "=" in part)
+    compact = text("已记录计划；展开查看", "Recorded schedule; expand for details")
+    if parts.get("FREQ") == "HOURLY" and parts.get("INTERVAL", "1") == "1":
+        compact = text("每小时", "Every hour")
+    elif parts.get("FREQ") == "DAILY" and parts.get("INTERVAL", "1") == "1" and parts.get("BYHOUR", "").isdigit() and parts.get("BYMINUTE", "0").isdigit():
+        compact = text("每天 ", "Daily ") + f"{int(parts['BYHOUR']):02d}:{int(parts.get('BYMINUTE', '0')):02d}"
+    return {"label": text("平台观察 · ", "Platform observed · ")+enabled, "compact": compact+" · "+(item.get("timezone") or unknown), "rows": rows}
+
+
+def schedule_result_view(schedule, language="zh", timezone=DEFAULT_TIMEZONE):
     """Present saved evidence without inferring platform settings or source freshness."""
     result = schedule.get("external_result")
     if not result:
@@ -309,13 +366,14 @@ def schedule_result_view(schedule, language="zh"):
     text = lambda zh, english: english if en else zh
     unknown = text("未知", "Unknown")
     value = lambda item: unknown if item is None or item == "" else str(item)
-    checked = lambda item: timestamp_label(item) if isinstance(item, (int, float)) else text("尚无记录", "Not recorded")
+    checked = lambda item: timestamp_label(item, timezone) if isinstance(item, (int, float)) else text("尚无记录", "Not recorded")
     observation = result.get("observation")
     latest = (observation or {}).get("latest") or {}
     index = (observation or {}).get("index") or {}
     evidence = (observation or {}).get("evidence") or {}
     stale = text("是", "Yes") if latest.get("stale") is True else text("否", "No") if latest.get("stale") is False else unknown
-    label = text("结果已接入 · 配置未核验", "Results linked · config unverified") if observation else text("暂无结果快照 · 配置未核验", "No result snapshot · config unverified")
+    platform = schedule_platform_view(schedule, language, timezone)
+    label = (text("结果已接入 · 平台配置已观察", "Results linked · platform config observed") if observation else text("暂无结果快照 · 平台配置已观察", "No result snapshot · platform config observed")) if platform else (text("结果已接入 · 配置未核验", "Results linked · config unverified") if observation else text("暂无结果快照 · 配置未核验", "No result snapshot · config unverified"))
     compact = [
         f"{text('最近观察尝试', 'Latest observed attempt')}: {value(latest.get('calendar_date'))} · {value(latest.get('status'))} · {text('入选数', 'Selected')}: {value(latest.get('selected_count'))}",
         f"{text('源过期标记', 'Source stale flag')}: {stale} · {text('已接受索引最新日期', 'Accepted index latest date')}: {value(index.get('latest_date'))}",
@@ -330,16 +388,18 @@ def schedule_result_view(schedule, language="zh"):
         (text("最近获取检查", "Last fetch check"), checked(result.get("checked_at"))),
         (text("最近成功获取", "Last successful fetch"), checked(result.get("last_good_at"))),
     ]
+    if platform:
+        rows[0] = (text("平台配置", "Platform configuration"), text("有人工观察快照；不代表实时状态或首次定时运行成功", "Manual snapshot available; not live status or proof of first scheduled execution"))
     if observation:
         rows.extend([
             (text("最近观察尝试日期", "Latest observed attempt date"), value(latest.get("calendar_date"))),
             (text("源运行编号", "Source run ID"), value(latest.get("run_id"))),
-            (text("源采集时间", "Source collected at"), value(latest.get("collected_at"))),
+            (text("源采集时间", "Source collected at"), timestamp_label(latest.get("collected_at"), timezone)),
             (text("源结果状态", "Source result status"), value(latest.get("status"))),
             (text("入选数", "Selected count"), value(latest.get("selected_count"))),
             (text("源过期标记", "Source stale flag"), stale),
             (text("已接受索引最新日期", "Accepted index latest date"), value(index.get("latest_date"))),
-            (text("索引生成时间", "Index generated at"), value(index.get("generated_at"))),
+            (text("索引生成时间", "Index generated at"), timestamp_label(index.get("generated_at"), timezone)),
             (text("索引条目数", "Index entry count"), value(index.get("entry_count"))),
         ])
     rows.extend([
@@ -348,6 +408,8 @@ def schedule_result_view(schedule, language="zh"):
         (text("状态文件", "Status path"), value(result.get("status_path"))),
         (text("索引文件", "Index path"), value(result.get("index_path"))),
     ])
+    if platform:
+        rows[0] = (text("平台配置", "Platform configuration"), text("有人工观察快照；不代表实时状态或首次定时运行成功", "Manual snapshot available; not live status or proof of first scheduled execution"))
     if observation:
         rows.extend([
             ("Status blob SHA", value(evidence.get("status_sha"))), ("Index blob SHA", value(evidence.get("index_sha"))),
@@ -383,8 +445,21 @@ def percent(used, total):
     return max(0, min(100, used / total * 100))
 
 
-def timestamp_label(value):
-    return time.strftime("%Y-%m-%d %H:%M %Z (UTC%z)", time.localtime(value))
+def timestamp_label(value, timezone=DEFAULT_TIMEZONE):
+    if value is None:
+        return "—"
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                return value + " [timezone unknown]"
+            value = parsed.timestamp()
+        except ValueError:
+            return value
+    local = datetime.fromtimestamp(value, ZoneInfo(validate_timezone(timezone)))
+    offset = local.strftime("%z")
+    offset = offset[:3] + ":" + offset[3:]
+    return local.strftime("%Y-%m-%d %H:%M:%S") + f" {timezone} (UTC{offset})"
 
 
 def scroll_thumb(first, last, height):
@@ -416,9 +491,20 @@ def display_signature(snapshot):
 
 
 class Dashboard:
+    timezone = DEFAULT_TIMEZONE
+    timezone_error = False
     def __init__(self, root, store, metrics, tk, ttk, language="auto"):
         self.root, self.store, self.metrics, self.tk, self.ttk = root, store, metrics, tk, ttk
         self.language_choice, self.language = language, resolve_language(language)
+        prefs = load_preferences(store.directory)
+        self.timezone = DEFAULT_TIMEZONE
+        self.timezone_error = bool(prefs.get("_read_error"))
+        try:
+            self.timezone = validate_timezone(prefs.get("timezone", DEFAULT_TIMEZONE))
+        except ValueError:
+            self.timezone_error = True
+        self.motion = Motion(root, reduced=prefs.get("reduced_motion") is True)
+        root.bind("<Destroy>", lambda event: self.motion.cancel_all() if event.widget is root else None, add="+")
         self.snapshot, self.metric_values, self.rows = {}, {}, []
         self.page, self.selected_task, self.timer = "overview", None, None
         self.workspace_filter = "all"
@@ -461,6 +547,9 @@ class Dashboard:
         self.build_shell()
         self.refresh()
 
+    def stamp(self, value):
+        return timestamp_label(value, getattr(self, "timezone", DEFAULT_TIMEZONE))
+
     def t(self, value, **variables):
         return translate(value, self.language, **variables)
 
@@ -468,7 +557,19 @@ class Dashboard:
         return self.tk.Label(parent, text=text if raw else self.t(text), bg=bg or parent.cget("bg"), fg=color or self.fg, font=(self.font, -pixels, "bold" if bold else "normal"), anchor="w", justify="left", wraplength=wrap)
 
     def button(self, parent, text, command, primary=False):
-        return self.tk.Button(parent, text=self.t(text), command=command, font=(self.font, -16, "bold"), bg=self.accent if primary else self.tint, fg="white" if primary else self.accent, activebackground="#d4e8dc", activeforeground=self.fg, relief="flat", bd=0, padx=16, pady=10, cursor="hand2", highlightthickness=0)
+        button = self.tk.Button(parent, text=self.t(text), command=command, font=(self.font, -16, "bold"), bg=self.accent if primary else self.tint, fg="white" if primary else self.accent, activebackground="#d4e8dc", activeforeground=self.fg, relief="flat", bd=0, padx=16, pady=10, cursor="hand2", highlightthickness=1, highlightbackground=parent.cget("bg"), highlightcolor=self.accent)
+        normal = {"color": button.cget("bg")}
+        def enter(event):
+            if button not in self.motion.jobs:
+                normal["color"] = button.cget("bg")
+            self.motion.color(button, normal["color"], "#1c7452" if primary else "#d3e8d9", lambda color: button.configure(bg=color))
+        def leave(event):
+            base = next((self.tint if name == self.page else "#eaf2e9" for name, item in getattr(self, "nav_buttons", {}).items() if item is button), normal["color"])
+            self.motion.color(button, button.cget("bg"), base, lambda color: button.configure(bg=color))
+        button.bind("<Enter>", enter)
+        button.bind("<Leave>", leave)
+        button.bind("<Destroy>", lambda event: self.motion.cancel(button), add="+")
+        return button
 
     def card(self, parent, height=130):
         canvas = self.tk.Canvas(parent, height=height, bg=self.bg, highlightthickness=0, bd=0)
@@ -485,6 +586,7 @@ class Dashboard:
         return canvas, inner
 
     def build_shell(self):
+        self.motion.cancel_all()
         for widget in self.root.winfo_children():
             widget.destroy()
         self.root.title(self.t("Dots Panel · 任务与资源看板"))
@@ -501,16 +603,13 @@ class Dashboard:
             button.configure(anchor="w", padx=18, bg="#eaf2e9", fg=self.fg)
             button.pack(fill="x", padx=12, pady=4)
             self.nav_buttons[page] = button
-        self.label(sidebar, "v" + VERSION + "  ·  Ctrl 1–7", 13, self.muted).pack(side="bottom", anchor="w", padx=22, pady=22)
+        self.label(sidebar, "v" + VERSION + "  ·  Ctrl 1–8", 13, self.muted).pack(side="bottom", anchor="w", padx=22, pady=22)
         main = self.tk.Frame(shell, bg=self.bg)
         main.pack(side="left", fill="both", expand=True, padx=25, pady=22)
         top = self.tk.Frame(main, bg=self.bg)
         top.pack(fill="x")
         self.page_title = self.label(top, "概览", 29, bold=True)
         self.page_title.pack(side="left")
-        self.locale_selector = self.filter_chip(top, {"auto": "Auto", "zh": "中文", "en": "English"}[self.language_choice]+" ⌄", self.open_language_menu)
-        self.locale_selector.pack(side="right", padx=(12, 0), pady=5)
-        self.locale_selector.bind("<Down>", lambda event: self.open_language_menu())
         self.refresh_button = self.filter_chip(top, self.t("↻ 刷新"), self.refresh)
         self.refresh_button.pack(side="right", padx=(10, 0), pady=5)
         self.health = self.label(top, "正在读取本地数据", 14, self.accent)
@@ -524,6 +623,77 @@ class Dashboard:
         self.footer = self.label(main, "数据来自显式登记；不读取内部会话", 13, self.muted)
         self.footer.pack(anchor="w", pady=(10, 0))
         self.render_page()
+
+    def render_settings(self):
+        area = self.scroll_area()
+        language_card, language_box = self.card(area, 150)
+        language_card.pack(fill="x", pady=(0, 14))
+        self.label(language_box, "语言", 20, bold=True).pack(anchor="w", pady=(0, 12))
+        self.locale_selector = self.filter_chip(language_box, {"auto": "Auto", "zh": "中文", "en": "English"}[self.language_choice]+" ⌄", self.open_language_menu)
+        self.locale_selector.pack(anchor="w")
+        self.locale_selector.bind("<Down>", lambda event: self.open_language_menu())
+        self.fit_card(language_card, language_box)
+
+        timezone_card, timezone_box = self.card(area, 270)
+        timezone_card.pack(fill="x", pady=(0, 14))
+        self.label(timezone_box, "显示时区", 20, bold=True).pack(anchor="w", pady=(0, 12))
+        self.timezone_input = self.tk.StringVar(self.root, value=self.timezone)
+        style = self.ttk.Style(self.root)
+        style.configure("Settings.TCombobox", padding=(12, 9), fieldbackground="#f3f7f0", background="#e5eee1", foreground=self.fg, arrowcolor=self.accent, bordercolor="#d5e2d2", lightcolor="#d5e2d2", darkcolor="#d5e2d2", borderwidth=1, arrowsize=16)
+        style.map("Settings.TCombobox", bordercolor=[("focus", self.accent)])
+        selector = self.ttk.Combobox(timezone_box, style="Settings.TCombobox", textvariable=self.timezone_input, values=COMMON_TIMEZONES, width=26, font=(self.font, -17))
+        selector.pack(anchor="w", pady=(0, 12))
+        selector.bind("<Return>", lambda event: self.change_timezone())
+        self.button(timezone_box, "应用时区", self.change_timezone).pack(anchor="w", pady=(0, 8))
+        self.settings_error = self.label(timezone_box, "无效或不支持的 IANA 时区" if self.timezone_error else "", 15, "#9c611c")
+        if self.timezone_error:
+            self.settings_error.pack(anchor="w")
+        self.label(timezone_box, self.stamp(time.time()), 15, self.accent, raw=True).pack(anchor="w", pady=(4, 8))
+        self.label(timezone_box, "默认北京时间；支持 IANA 时区。仅调整显示，不改变系统时间或任务调度。", 15, self.muted, wrap=660).pack(anchor="w")
+        self.fit_card(timezone_card, timezone_box)
+
+        motion_card, motion_box = self.card(area, 150)
+        motion_card.pack(fill="x", pady=(0, 14))
+        self.motion_preference = self.tk.BooleanVar(self.root, value=self.motion.reduced)
+        self.motion_checkbox = self.tk.Checkbutton(motion_box, text="Reduce motion" if self.language == "en" else "减少动效", variable=self.motion_preference, command=self.change_motion, bg=self.panel, activebackground=self.panel, fg=self.fg, selectcolor=self.panel, font=(self.font, -17), highlightcolor=self.accent, highlightthickness=1, highlightbackground=self.panel, padx=4, pady=8)
+        self.motion_checkbox.pack(anchor="w", pady=(0, 6))
+        self.label(motion_box, "Short hover feedback only. This native app uses this local preference." if self.language == "en" else "仅保留短暂的悬停反馈；原生窗口使用此本机偏好。", 15, self.muted, raw=True, wrap=660).pack(anchor="w")
+        self.fit_card(motion_card, motion_box)
+        def wrap_settings(event):
+            for child in event.widget.winfo_children():
+                if isinstance(child, self.tk.Label):
+                    child.configure(wraplength=max(100, event.width-8))
+        for box in (language_box, timezone_box, motion_box):
+            box.bind("<Configure>", wrap_settings, add="+")
+        self.label(area, "设置保存在本机", 14, self.muted).pack(anchor="w", pady=(0, 12))
+
+    def change_motion(self):
+        self.motion.reduced = self.motion_preference.get()
+        self.motion.cancel_all()
+        try:
+            save_preferences(self.store.directory, reduced_motion=self.motion.reduced)
+            self.preference_error = False
+        except (OSError, ValueError):
+            self.preference_error = True
+        self.build_shell()
+        self.update_health()
+        self.motion_checkbox.focus_set()
+
+    def change_timezone(self):
+        try:
+            value = validate_timezone(self.timezone_input.get().strip())
+        except ValueError:
+            self.settings_error.configure(text=self.t("无效或不支持的 IANA 时区"))
+            self.settings_error.pack(anchor="w")
+            return
+        try:
+            save_preferences(self.store.directory, timezone=value)
+            self.preference_error = False
+        except (OSError, ValueError):
+            self.preference_error = True
+        self.timezone, self.timezone_error = value, False
+        self.render_page()
+        self.update_health()
 
     def open_language_menu(self):
         if getattr(self, "language_popup", None) is not None:
@@ -615,6 +785,8 @@ class Dashboard:
             self.preference_error = False
         except (OSError, ValueError):
             self.preference_error = True
+        if hasattr(self, "page_scroll") and self.page_scroll.winfo_exists():
+            self.scroll_positions[getattr(self, "rendered_page_key", (self.page, self.selected_task))] = self.page_scroll.yview()[0]
         self.language_choice, self.language = choice, resolve_language(choice)
         self.rows = task_rows(self.snapshot, time.time(), self.language)
         self.build_shell()
@@ -657,15 +829,20 @@ class Dashboard:
         if self.read_error:
             message = self.t("刷新失败，保留上次数据")
         elif self.preference_error:
-            message = self.t("未保存语言偏好")
+            message = self.t("未保存偏好；当前仅本次有效")
+        elif self.timezone_error:
+            message = self.t("无效或不支持的 IANA 时区")
         else:
             last = getattr(self, "last_successful_refresh", None)
-            stamp = time.strftime("%H:%M:%S %Z", time.localtime(last)) if last is not None else self.t("尚未刷新")
+            stamp = self.stamp(last) if last is not None else self.t("尚未刷新")
             message = self.t("每 5 秒 · 最近刷新") + " " + stamp
         self.health.configure(text=message, fg="#9c611c" if self.read_error or self.preference_error else self.accent)
 
     def render_page(self):
+        self.motion.cancel_all()
         focused = self.root.focus_get()
+        output_focus = next((key for key, widget in getattr(self, "output_buttons", {}).items() if widget == focused), None)
+        self.output_buttons = {}
         filter_focus = next((key for key, widget in getattr(self, "filter_buttons", {}).items() if widget == focused), None)
         more_focus = focused is not None and focused == getattr(self, "more_filter_button", None)
         had_search_focus = hasattr(self, "search_entry") and self.root.focus_get() == self.search_entry
@@ -700,6 +877,8 @@ class Dashboard:
             self.render_agents()
         elif self.page == "rules":
             self.render_rules()
+        elif self.page == "settings":
+            self.render_settings()
         elif self.page == "about":
             self.render_about()
         self.rendered_page_key = (self.page, self.selected_task)
@@ -707,6 +886,9 @@ class Dashboard:
         focus_target = getattr(self, "more_filter_button", None) if more_focus else getattr(self, "filter_buttons", {}).get(filter_focus)
         if focus_target is not None and focus_target.winfo_exists():
             focus_target.focus_set()
+        output_target = getattr(self,"output_buttons",{}).get(output_focus)
+        if output_target is not None and output_target.winfo_exists():
+            output_target.focus_set()
         if had_search_focus and hasattr(self, "search_entry") and self.search_entry.winfo_exists():
             self.search_entry.focus_set()
             self.search_entry.icursor("end")
@@ -718,7 +900,15 @@ class Dashboard:
         import tkinter.font as font
         width = font.Font(root=self.root, family=self.font, size=-14).measure(text) + 26
         canvas = self.tk.Canvas(parent, width=width, height=34, bg=self.bg, bd=0, highlightthickness=0, cursor="hand2", takefocus=1)
-        self.round_shape(canvas, 0, 0, width, 34, self.accent if selected else "#e9eee8", 17)
+        normal = self.accent if selected else "#e9eee8"
+        shape = self.round_shape(canvas, 0, 0, width, 34, normal, 17)
+        canvas.configure(highlightthickness=1, highlightbackground=self.bg, highlightcolor=self.accent)
+        def feedback(active):
+            target = ("#1b7351" if selected else "#dcecdf") if active else normal
+            self.motion.color(canvas, canvas.itemcget(shape, "fill"), target, lambda color: canvas.itemconfigure(shape, fill=color))
+        canvas.bind("<Enter>", lambda event: feedback(True))
+        canvas.bind("<Leave>", lambda event: feedback(False))
+        canvas.bind("<Destroy>", lambda event: self.motion.cancel(canvas), add="+")
         canvas.create_text(width/2, 17, text=text, fill="white" if selected else self.muted, font=(self.font, -14, "bold" if selected else "normal"))
         canvas.bind("<Button-1>", lambda event: command())
         canvas.bind("<Return>", lambda event: command())
@@ -818,6 +1008,53 @@ class Dashboard:
         # constructed, particularly after rebuilding the shell for a locale.
         focus_job["id"] = popup.after(30, focus_when_mapped)
         return "break"
+
+    def output_button(self, parent, text, command, task_id, action="files"):
+        button = self.filter_chip(parent, text, command)
+        if not hasattr(self,"output_buttons"):
+            self.output_buttons = {}
+        self.output_buttons[(task_id,action)] = button
+        return button
+
+    def open_task_files(self, task_id):
+        self.detail_tab = "files"
+        self.show_attention_advice = False
+        self.page, self.selected_task, self.detail_scroll = "conversations", task_id, 0.0
+        self.render_page()
+
+    def open_task_outputs(self, task_id):
+        from tkinter import messagebox
+        try:
+            if not hasattr(self, "folder_opener"):
+                self.folder_opener = TaskFolderOpener()
+                self.root.bind("<Destroy>", lambda event: self.folder_opener.close() if event.widget is self.root else None, add="+")
+            process = self.folder_opener.open(self.store, task_id)
+            def check_launch():
+                if process.poll() not in (None, 0):
+                    messagebox.showerror("Folder unavailable" if self.language == "en" else "无法打开文件夹", "The cloud desktop file manager could not open this registered task folder." if self.language == "en" else "云桌面文件管理器未能打开该任务的成果文件夹。", parent=self.root)
+            self.root.after(400, check_launch)
+        except (OSError, ValueError, sqlite3.Error):
+            messagebox.showerror("Folder unavailable" if self.language == "en" else "无法打开文件夹", "Only an unchanged registered task output folder can be opened on the cloud desktop." if self.language == "en" else "只能在云桌面打开经过核验、未被替换的任务成果文件夹。", parent=self.root)
+
+    def render_output_bar(self, parent, task_id, detail=False):
+        summary = task_output_summary(self.snapshot, task_id)
+        en = self.language == "en"
+        box = self.tk.Frame(parent, bg=parent.cget("bg"))
+        box.pack(fill="x", pady=(6, 4))
+        self.label(box, output_summary_text(summary, self.language), 13, self.accent, True, raw=True, wrap=780).pack(anchor="w", fill="x")
+        if summary.get("main"):
+            main = self.label(box, output_main_text(summary, self.language), 12, self.muted, raw=True, wrap=780)
+            main.pack(anchor="w", fill="x", pady=(2, 3))
+            box.bind("<Configure>", lambda event: main.configure(wraplength=max(120,event.width-10)), add="+")
+        actions = self.tk.Frame(box, bg=box.cget("bg"))
+        actions.pack(anchor="w", pady=(3,0))
+        if summary.get("count") or detail:
+            self.output_button(actions, "View files" if en else "查看文件", lambda key=task_id:self.open_task_files(key), task_id).pack(side="left", padx=(0,6))
+        if detail and summary.get("count"):
+            self.output_button(actions, "Open output folder" if en else "打开成果文件夹", lambda key=task_id:self.open_task_outputs(key), task_id, "folder").pack(side="left")
+        if detail:
+            self.label(box, "Registered files only · archiving does not imply delivery or acceptance" if en else "仅显示已登记文件 · 归档不等于发送或验收", 11, self.muted, raw=True, wrap=780).pack(anchor="w", pady=(3,0))
+        return box
 
     def open_task(self, task_id, advice=False):
         self.show_attention_advice = advice
@@ -1031,17 +1268,19 @@ class Dashboard:
         search.bind("<Button-1>", lambda event: self.search_entry.focus_set())
 
     def airy_task_card(self, parent, row, index):
-        card = self.tk.Canvas(parent, height=182, bg=self.bg, bd=0, highlightthickness=0, cursor="hand2", takefocus=1)
+        card = self.tk.Canvas(parent, height=240, bg=self.bg, bd=0, highlightthickness=0, cursor="hand2", takefocus=1)
         card.grid(row=index//2, column=index%2, sticky="nsew", padx=(0 if index%2 == 0 else 13, 0), pady=(0, 12))
         parent.grid_columnconfigure(index%2, weight=1, uniform="task_cards")
         colors = {"running": ("#e0f6e8", "#219363"), "succeeded": ("#eeebff", "#8569db"), "pending": ("#fff2d9", "#c48b26"), "cancelled": ("#fbe9e8", "#b86b68"), "failed": ("#fbe5e5", "#c55353")}
         icon_bg, icon_color = colors.get(row["status"], colors["pending"])
         latest = next((item for item in sorted(self.snapshot.get("activity", []), key=lambda item: item["created"], reverse=True) if item.get("task_id") == row["id"]), None)
+        outputs = task_output_summary(self.snapshot, row["id"])
+        output_button = self.output_button(card, "View files" if self.language == "en" else "查看文件", lambda key=row["id"]:self.open_task_files(key), row["id"]) if outputs.get("count") else None
         def draw(event):
             width = event.width
             card.delete("all")
             active = row["status"] == "running"
-            self.surface_layers(card, width, 182, "#f3fcf6" if active else self.panel, "#cfe9d7" if active else "#e7ece5")
+            self.surface_layers(card, width, 240, "#f3fcf6" if active else self.panel, "#cfe9d7" if active else "#e7ece5")
             self.round_shape(card, 19, 17, 39, 39, icon_bg, 12)
             card.create_rectangle(30, 29, 47, 43, outline=icon_color, width=2)
             card.create_line(30, 33, 47, 33, fill=icon_color, width=2)
@@ -1067,6 +1306,12 @@ class Dashboard:
             footer = self.t(mode) + "  ·  " + row["values"][5]
             card.create_text(20, 156, text=self.cut_text(footer, width-65, 12), anchor="w", fill=self.muted, font=(self.font, -12))
             card.create_text(width-23, 154, text="›", fill=self.accent, font=(self.font, -23))
+            card.create_line(20,171,width-20,171,fill="#e4eee5")
+            available = max(60,width-(165 if output_button is not None else 40))
+            card.create_text(20,188,text=self.cut_text(output_summary_text(outputs,self.language),available,12),anchor="w",fill=self.accent,font=(self.font,-12,"bold"))
+            card.create_text(20,211,text=self.cut_text(output_main_text(outputs,self.language),available,11),anchor="w",fill=self.muted,font=(self.font,-11))
+            if output_button is not None:
+                card.create_window(width-20,201,window=output_button,anchor="e")
         card.bind("<Configure>", draw)
         def update_live():
             latest_row = next((item for item in self.rows if item["id"] == row["id"]), None)
@@ -1117,7 +1362,7 @@ class Dashboard:
                 card.create_oval(27, y-5, 39, y+7, outline=self.accent, width=2)
                 card.create_line(33, y-2, 33, y+2, 36, y+2, fill=self.accent)
                 card.create_text(57, y-3, text=self.cut_text(record["name"], width-95, 15, True), anchor="w", fill=self.fg, font=(self.font, -15, "bold"))
-                state, timing = schedule_summary(record, self.language)
+                state, timing = schedule_summary(record, self.language, self.timezone)
                 card.create_text(57, y+19, text=self.cut_text(state+" · "+timing, width-80, 12), anchor="w", fill=self.muted, font=(self.font, -12))
             if not records:
                 card.create_text(20, 76, text=self.t("尚未登记定时任务"), anchor="w", fill=self.muted, font=(self.font, -15))
@@ -1144,7 +1389,7 @@ class Dashboard:
             self.label(row, task["name"] + " · " + self.t(STATUS[run["status"]]), 14, self.fg, True, raw=True, wrap=800).pack(anchor="w")
             for field, prefix in (("lifecycle_reason", "Why: " if en else "原因："), ("next_step", "Next: " if en else "建议下一步：")):
                 self.label(row, prefix + (run.get(field) or ("Not recorded" if en else "尚未记录")), 12, self.muted, raw=True, wrap=800).pack(anchor="w")
-            observation = ("Recorded: " if en else "记录时间：") + (timestamp_label(run["updated"]) if run.get("updated") is not None else ("Unknown" if en else "未知"))
+            observation = ("Recorded: " if en else "记录时间：") + (self.stamp(run["updated"]) if run.get("updated") is not None else ("Unknown" if en else "未知"))
             if run.get("stale"):
                 observation += " · Older record; check current status" if en else " · 记录较旧，请先核对当前状态"
             self.label(row, observation, 11, self.muted, raw=True).pack(anchor="w", pady=(2, 4))
@@ -1158,7 +1403,7 @@ class Dashboard:
                 task, run = item["task"], item["run"]
                 self.label(section, task["name"] + " · " + (run.get("lifecycle_reason") or ("Not recorded" if en else "尚未记录")), 12, self.muted, raw=True, wrap=800).pack(anchor="w")
                 self.label(section, ("Next: " if en else "下一步：") + (run.get("next_step") or ("Not recorded" if en else "尚未记录")), 12, self.muted, raw=True, wrap=800).pack(anchor="w")
-                observed = timestamp_label(run["updated"]) if run.get("updated") is not None else ("Unknown" if en else "未知")
+                observed = self.stamp(run["updated"]) if run.get("updated") is not None else ("Unknown" if en else "未知")
                 self.label(section, ("Recorded: " if en else "记录时间：") + observed + ((" · Older record" if en else " · 记录较旧") if run.get("stale") else ""), 11, self.muted, raw=True).pack(anchor="w")
                 self.filter_chip(section, "Activity details" if en else "活动详情", lambda key=task["id"]: self.open_task(key)).pack(anchor="w", pady=(4, 5))
 
@@ -1215,6 +1460,7 @@ class Dashboard:
         work = work_type_label(current[0]["work_type"], self.language) if current else ("Standby" if en else "待命") if agent and agent.get("status") == "idle" else ("Unconfirmed" if en else "未确认")
         meta = ("Owner: " if en else "负责人：") + owner + "  ·  " + work + "  ·  " + ("Updated: " if en else "更新：") + row["values"][5]
         self.label(header, meta, 12, self.muted, raw=True).pack(anchor="w", pady=(7, 3))
+        self.render_output_bar(header, self.selected_task, detail=True)
         closeout = (row.get("run") or {}).get("closeout")
         if closeout:
             pinned = ("Deliverables: " if en else "交付：") + self.cut_text(closeout["summary"], 600, 12)
@@ -1229,6 +1475,9 @@ class Dashboard:
         self.filter_chip(tabs, ("Less ⌃" if en else "收起 ⌃") if getattr(self, "detail_meta", False) else ("Details ⌄" if en else "更多信息 ⌄"), self.toggle_detail_meta).pack(side="right")
         area = self.scroll_area()
         lifecycle = row.get("run") or {}
+        if getattr(self, "detail_tab", "timeline") == "files" and not getattr(self, "detail_meta", False):
+            self.render_task_files(area, files)
+            return
         if closeout:
             self.label(area, "Final deliverables & verification" if en else "最终产出与验证", 16, self.fg, True, raw=True).pack(anchor="w", pady=(0, 6))
             state_note = ("Completion gate checked" if en else "已通过完成门槛") if closeout.get("completed_at") else ("Recorded; completion gate not yet checked" if en else "已登记；尚未通过完成门槛")
@@ -1243,11 +1492,12 @@ class Dashboard:
             self.filter_chip(area, "View files" if en else "查看文件", lambda: self.set_detail_tab("files")).pack(anchor="w", pady=(4, 12))
         elif lifecycle.get("status") == "succeeded":
             self.label(area, "Legacy completion; no evidence gate record" if en else "历史完成记录；未登记完成门槛依据", 12, self.muted, raw=True).pack(anchor="w", pady=(0, 8))
-        for field, zh, english in (("lifecycle_reason", "状态原因", "Reason"), ("next_step", "下一步", "Next step"), ("lifecycle_evidence", "状态依据", "Evidence")):
-            if lifecycle.get(field):
-                self.label(area, (english if en else zh) + ": " + lifecycle[field], 13, self.fg, raw=True, wrap=800).pack(anchor="w", pady=(0, 7))
-        if lifecycle.get("lifecycle_reason"):
-            self.label(area, "Recorded lifecycle only; does not control the executor" if en else "仅登记任务状态，不会控制执行者", 12, self.muted, raw=True, wrap=800).pack(anchor="w", pady=(0, 12))
+        if getattr(self, "detail_meta", False):
+            for field, zh, english in (("lifecycle_reason", "状态原因", "Reason"), ("next_step", "下一步", "Next step"), ("lifecycle_evidence", "状态依据", "Evidence")):
+                if lifecycle.get(field):
+                    self.label(area, (english if en else zh) + ": " + lifecycle[field], 13, self.fg, raw=True, wrap=800).pack(anchor="w", pady=(0, 7))
+            if lifecycle.get("lifecycle_reason"):
+                self.label(area, "Recorded lifecycle only; does not control the executor" if en else "仅登记任务状态，不会控制执行者", 12, self.muted, raw=True, wrap=800).pack(anchor="w", pady=(0, 12))
         if getattr(self, "show_attention_advice", False) and lifecycle.get("status") in ("waiting_user", "awaiting_review", "paused"):
             task = next(item for item in self.snapshot["tasks"] if item["id"] == self.selected_task)
             self.label(area, "Copy into chat after filling in your decision; nothing has been sent" if en else "填写决定后可复制到聊天；此处没有发送任何消息", 12, self.muted, raw=True, wrap=800).pack(anchor="w", pady=(0, 6))
@@ -1260,7 +1510,7 @@ class Dashboard:
             draft.bind("<Tab>", lambda event: (draft.tk_focusNext().focus_set(), "break")[-1])
             draft.bind("<Shift-Tab>", lambda event: (draft.tk_focusPrev().focus_set(), "break")[-1])
         if getattr(self, "detail_meta", False):
-            binding = binding_summary(self.snapshot, self.selected_task, self.language)
+            binding = binding_summary(self.snapshot, self.selected_task, self.language, self.timezone)
             self.label(area, binding["title"] + " · " + " ".join(binding["lines"]), 12, self.muted, raw=True, wrap=800).pack(anchor="w", pady=(0, 10))
             if agent and agent_text(agent, "note", self.language):
                 self.label(area, agent_text(agent, "note", self.language), 12, self.muted, raw=True, wrap=800).pack(anchor="w", pady=(0, 10))
@@ -1282,7 +1532,7 @@ class Dashboard:
             if record["state"]:
                 title += "  ·  " + self.t(STATES.get(record["state"], record["state"]))
             self.label(inner, title, 16, self.accent, True, raw=True).pack(anchor="w")
-            self.label(inner, timestamp_label(record["created"]), 12, self.muted).pack(anchor="w", pady=(3, 9))
+            self.label(inner, self.stamp(record["created"]), 12, self.muted).pack(anchor="w", pady=(3, 9))
             paragraph = self.detail_paragraph(inner, record["message"])
             pending = {"id": None}
             def fit_paragraph(event=None, paragraph=paragraph, frame=inner, card=surface, pending=pending):
@@ -1315,7 +1565,7 @@ class Dashboard:
             surface, body = self.card(area, 140)
             surface.pack(fill="x", pady=(0, 12))
             self.label(body, artifact["title"], 17, bold=True, raw=True).pack(anchor="w")
-            line = artifact_kind_label(artifact["kind"], self.language) + f" · {artifact['size']:,} B · " + timestamp_label(artifact["created"])
+            line = artifact_kind_label(artifact["kind"], self.language) + f" · {artifact['size']:,} B · " + self.stamp(artifact["created"])
             self.label(body, line, 12, self.muted, raw=True).pack(anchor="w", pady=5)
             self.label(body, artifact_delivery_label(artifact, self.language), 12, self.muted, raw=True, wrap=760).pack(anchor="w", pady=3)
             self.label(body, artifact["relative_path"], 11, self.muted, raw=True, wrap=760).pack(anchor="w")
@@ -1324,6 +1574,8 @@ class Dashboard:
                 self.filter_chip(body, "Preview PNG" if en else "预览 PNG", lambda key=artifact["id"]: self.preview_artifact(key)).pack(anchor="w", pady=4)
             elif Path(artifact["relative_path"]).suffix in (".txt", ".md", ".json", ".csv"):
                 self.filter_chip(body, "Read text" if en else "阅读文本", lambda key=artifact["id"]: self.preview_text_artifact(key)).pack(anchor="w", pady=4)
+            elif artifact["kind"] == "video":
+                self.label(body, "Video metadata only; open the output folder to use the file. No automatic playback." if en else "视频仅登记元数据；可从成果文件夹使用文件，不会自动播放。", 11, self.muted, raw=True, wrap=760).pack(anchor="w", pady=4)
             else:
                 self.label(body, "Metadata only; view the delivered attachment separately" if en else "仅显示登记信息；请查看另行交付的附件", 11, self.muted, raw=True).pack(anchor="w", pady=4)
             self.fit_card(surface, body)
@@ -1475,7 +1727,8 @@ class Dashboard:
             summary = ("Owner: " if self.language == "en" else "负责人：") + owner_name + " · " + observed + " | " + summary
             if row["warning"]:
                 summary += "\n" + row["warning"]
-            self.compact_row(grid, values[0], summary, values[2], lambda key=row["id"]: self.open_task(key))
+            box = self.compact_row(grid, values[0], summary, values[2], lambda key=row["id"]: self.open_task(key))
+            self.render_output_bar(box, row["id"])
         if not rows:
             self.label(area, "该状态暂无任务", 16, self.muted).pack(anchor="w", pady=20)
 
@@ -1487,12 +1740,12 @@ class Dashboard:
         area = self.scroll_area()
         en = self.language == "en"
         self.label(area, "Manually recorded executor observations; a profile is not a live session" if en else "人工记录的执行者观察；档案本身不代表正在运行的会话", 13, self.muted, raw=True, wrap=820).pack(anchor="w", pady=(0, 12))
-        agents = self.snapshot.get("agents", [])
+        agents = sorted(self.snapshot.get("agents", []), key=lambda a: (a.get("status") != "running", -(a.get("observed_at") or 0), a["id"]))
         selected = next((item for item in agents if item["id"] == getattr(self, "selected_agent", None)), None)
         if selected:
             self.filter_chip(area, "← All agents" if en else "← 返回 Agent 列表", lambda: self.open_agent(None)).pack(anchor="w", pady=(0, 12))
             state = agent_status_label(selected.get("status"), self.language)
-            observed = observation_label(selected.get("observed_at"), self.language)
+            observed = observation_label(selected.get("observed_at"), self.language, self.timezone)
             self.compact_row(area, agent_text(selected, "name", self.language), agent_text(selected, "note", self.language)+"\n"+observed, state)
             grouped = agent_work(self.snapshot, selected)
             for key, zh, english in (("current", "当前已记录工作", "Current recorded work"), ("unfinished", "未完成的分配", "Unfinished assignments"), ("recent", "近期结束的活动", "Recent terminal activities")):
@@ -1511,7 +1764,7 @@ class Dashboard:
             counts = (f"{len(grouped['unfinished'])} unfinished · {len(grouped['recent'])} recent" if en else f"{len(grouped['unfinished'])} 项未完成 · {len(grouped['recent'])} 项近期结束")
             current = grouped["current"]
             work = (work_type_label(current[0].get("work_type"), self.language)+" · "+current[0]["task"]["name"]) if current else ("No current work recorded" if en else "暂无当前工作记录")
-            summary = work+"\n"+counts+"\n"+observation_label(agent.get("observed_at"), self.language)
+            summary = work+"\n"+counts+"\n"+observation_label(agent.get("observed_at"), self.language, self.timezone)
             self.compact_row(grid, agent_text(agent, "name", self.language), summary, agent_status_label(agent.get("status"), self.language), lambda key=agent["id"]: self.open_agent(key), avatar=agent.get("avatar") or "mint")
         if not agents:
             self.label(area, "No agents registered" if en else "尚未登记 Agent", 16, self.muted, raw=True).pack(anchor="w", pady=20)
@@ -1529,23 +1782,24 @@ class Dashboard:
     def render_schedules(self):
         area = self.scroll_area()
         en = self.language == "en"
-        self.label(area, "Platform configuration unverified" if en else "平台定时配置未核验", 18, self.accent, True, raw=True).pack(anchor="w")
+        self.label(area, "Platform observations and result snapshots" if en else "平台配置观察与结果快照", 18, self.accent, True, raw=True).pack(anchor="w")
         self.label(area, "Saved result snapshots do not prove schedules are enabled. Every 5 seconds refreshes local data only, without polling GitHub; external results require manual sync." if en else "已保存的结果快照不证明定时器已启用。每 5 秒只刷新本地数据，不轮询 GitHub；外部结果须手动同步。", 13, self.muted, raw=True, wrap=800).pack(anchor="w", pady=(6, 14))
         grid = self.card_grid(area, minimum=370, maximum=2)
         for record in self.snapshot.get("schedules", []):
-            state, timing = schedule_summary(record, self.language)
-            result = schedule_result_view(record, self.language)
+            state, timing = schedule_summary(record, self.language, self.timezone)
+            result = schedule_result_view(record, self.language, self.timezone)
+            platform = schedule_platform_view(record, self.language, self.timezone)
             if result:
-                timing = "\n".join(result["compact"])
+                timing = ((platform["compact"]+"\n") if platform else "") + "\n".join(result["compact"])
             box = self.compact_row(grid, record["name"], timing, state)
             if result and result["error"]:
                 self.label(box, result["error"], 14, "#9c611c", raw=True, wrap=800).pack(anchor="w", pady=(5, 0))
             expanded = record["id"] in getattr(self, "expanded_schedules", set())
             self.filter_chip(box, ("Less ⌃" if en else "收起 ⌃") if expanded else ("Details ⌄" if en else "详情 ⌄"), lambda key=record["id"]: self.toggle_registry_detail("schedules", key)).pack(anchor="e", pady=(4,0))
             if expanded:
-                for label, value in result["rows"] if result else []:
+                for label, value in ((platform["rows"] if platform else []) + (result["rows"] if result else [])):
                     self.label(box,label+": "+value,14,self.muted,raw=True,wrap=800).pack(anchor="w",pady=3)
-                metadata = (("Project" if en else "项目",record.get("project")), ("Source" if en else "来源",record.get("source")), ("Registered state (metadata)" if en else "登记状态（元数据）",record.get("state")), ("Registered planned time (unverified)" if en else "登记计划时间（未核验）",timestamp_label(record["next_run"]) if record.get("next_run") is not None else ("Unknown" if en else "未知")), ("Last recorded update" if en else "最近登记更新",timestamp_label(record["updated"]) if record.get("updated") is not None else ("Unknown" if en else "未知")))
+                metadata = (("Project" if en else "项目",record.get("project")), ("Source" if en else "来源",record.get("source")), ("Registered state (metadata)" if en else "登记状态（元数据）",record.get("state")), ("Registered planned time (unverified)" if en else "登记计划时间（未核验）",self.stamp(record["next_run"]) if record.get("next_run") is not None else ("Unknown" if en else "未知")), ("Last recorded update" if en else "最近登记更新",self.stamp(record["updated"]) if record.get("updated") is not None else ("Unknown" if en else "未知")))
                 for label, value in metadata:
                     self.label(box,label+": "+str(value or "—"),14,self.muted,raw=True,wrap=800).pack(anchor="w",pady=3)
                 self.label(box,"Registration does not create, start or resume a scheduler" if en else "登记不会创建、启动或恢复任何定时器",14,self.muted,raw=True,wrap=800).pack(anchor="w",pady=(5,0))
@@ -1568,7 +1822,7 @@ class Dashboard:
             expanded = key in getattr(self, "expanded_software", set())
             self.filter_chip(box,("Less ⌃" if en else "收起 ⌃") if expanded else ("Details ⌄" if en else "详情 ⌄"),lambda key=key:self.toggle_registry_detail("software",key)).pack(anchor="e",pady=(4,0))
             if expanded:
-                for label,value in (("Description" if en else "简介",record.get("description")),("Kind" if en else "类型",record.get("kind")),("Availability" if en else "可用性",state),("Version" if en else "版本",record.get("version")),("Checked" if en else "检测时间",observation_label(record.get("verified_at"),self.language))):
+                for label,value in (("Description" if en else "简介",record.get("description")),("Kind" if en else "类型",record.get("kind")),("Availability" if en else "可用性",state),("Version" if en else "版本",record.get("version")),("Checked" if en else "检测时间",observation_label(record.get("verified_at"),self.language,self.timezone))):
                     self.label(box,label+": "+str(value or "—"),14,self.muted,raw=True,wrap=800).pack(anchor="w",pady=3)
                 self.label(box,"Detected availability is not proof of a running service" if en else "检测到可用不代表服务正在运行",14,self.muted,raw=True,wrap=800).pack(anchor="w",pady=4)
                 if "close_current_viewer" in record.get("controls",[]) and record.get("kind")=="dots-panel":
@@ -1597,7 +1851,7 @@ class Dashboard:
                 self.label(section, title + " · " + value, 14, self.muted, raw=True).pack(anchor="w", pady=2)
             for component, observation in report.get("observations", {}).items():
                 if observation.get("evidence"):
-                    when = timestamp_label(observation["observed_at"]) if observation.get("observed_at") is not None else "—"
+                    when = self.stamp(observation["observed_at"]) if observation.get("observed_at") is not None else "—"
                     self.label(section, when + " · " + observation["evidence"], 11, self.muted, raw=True, wrap=800).pack(anchor="w", pady=2)
         self.label(section, "No account scan, installation or scheduling; source availability does not verify account setup" if en else "不扫描账户、不安装、不创建定时器；源码可用不等于账户已配置", 11, self.muted, raw=True, wrap=800).pack(anchor="w", pady=(5, 0))
 
@@ -1615,7 +1869,7 @@ class Dashboard:
                 ("Published release" if en else "已发布版本", state_label(release.get("release_status", "unknown")) + (" · " + release["release_tag"] if release.get("release_tag") else "")),
                 ("Source synchronization" if en else "源码同步状态", state_label(release.get("sync_status", "unknown"))),
                 ("Verified remote commit" if en else "已核验远端提交", release.get("remote_commit") or "—"),
-                ("Last checked" if en else "最近核验", timestamp_label(release["checked_at"]) if release.get("checked_at") else ("Not checked" if en else "尚未核验"))]
+                ("Last checked" if en else "最近核验", self.stamp(release["checked_at"]) if release.get("checked_at") else ("Not checked" if en else "尚未核验"))]
         for title, value in rows:
             row = self.tk.Frame(area, bg=self.panel, highlightthickness=1, highlightbackground="#e3ebe1", padx=13, pady=11)
             row.pack(fill="x", pady=(0, 6))
@@ -1662,7 +1916,7 @@ class Dashboard:
             if expanded:
                 self.label(box, skill_origin_label(source.get("origin"), language)+" · "+skill_publication_label(source.get("publication"), language), 14, self.muted, raw=True).pack(anchor="w", fill="x", pady=(8, 0))
                 self.label(box, ("When: " if en else "使用场景：") + agent_text(item, "when_used", language), 15, self.fg, raw=True).pack(anchor="w", fill="x", pady=(8, 0))
-                observation = ("Manual observation · " if en else "人工观察 · ") + timestamp_label(item.get("observed_at")) + " · " + skill_version_label(item.get("version_status"), language)
+                observation = ("Manual observation · " if en else "人工观察 · ") + self.stamp(item.get("observed_at")) + " · " + skill_version_label(item.get("version_status"), language)
                 self.label(box, observation, 14, self.muted, raw=True).pack(anchor="w", fill="x", pady=(8, 0))
                 if item.get("version_note") or item.get("version_note_en"):
                     self.label(box, agent_text(item, "version_note", language), 14, self.muted, raw=True).pack(anchor="w", fill="x")

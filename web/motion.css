@@ -1,0 +1,23 @@
+/* Quiet interaction feedback. No infinite animations, timers or layout tweens. */
+:root{--motion-fast:160ms;--motion-ease:cubic-bezier(.2,.7,.2,1);--focus-ring:#328460}
+button,.nav,summary,.filter-chip,.detail-tabs button{transition:background-color var(--motion-fast) var(--motion-ease),border-color var(--motion-fast) var(--motion-ease),color var(--motion-fast) var(--motion-ease),box-shadow var(--motion-fast) var(--motion-ease)}
+.task-card{transition:box-shadow var(--motion-fast) var(--motion-ease),border-color var(--motion-fast) var(--motion-ease),transform var(--motion-fast) var(--motion-ease)}
+.nav:not(.active):hover{background:#eaf0e6;color:#375d48}
+button:not(:disabled):active{box-shadow:inset 0 1px 4px #24483118}
+button:focus-visible,a:focus-visible,summary:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--focus-ring);outline-offset:4px}
+.task-card:focus-visible{border-color:#83b79a;box-shadow:0 0 0 5px #dceee3}
+summary{border-radius:8px;padding:5px 4px;cursor:pointer;color:#376b50}
+summary:hover{background:#eaf4e9}
+details[open]>summary{color:#247550}
+summary::marker{color:#529b75}
+.agent-row,.skill-row,.registry-card,.summary-card,.settings-card{box-shadow:0 6px 20px #27433106,0 1px 2px #27433104;border-color:#e0e7dc}
+.agent-heading,.skill-heading{gap:12px}
+.agent-details,.registry-details,.skill-details{margin-top:16px;padding-top:12px;border-top:1px solid #e6ece2}
+.settings-card .motion-setting{display:flex;align-items:center;gap:10px;font-weight:600;cursor:pointer}
+.settings-card .motion-setting input{min-width:0;width:18px;height:18px;accent-color:#258560}
+.settings-card .motion-description{font-size:14px;color:#596e5e}
+@media(hover:hover){.task-card:hover{transform:translateY(-2px);box-shadow:0 10px 26px #31584010}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{animation:none!important;transition:none!important}.task-card:hover{transform:none}}
+html[data-reduced-motion="true"]{scroll-behavior:auto}
+html[data-reduced-motion="true"] *,html[data-reduced-motion="true"] *::before,html[data-reduced-motion="true"] *::after{animation:none!important;transition:none!important}
+html[data-reduced-motion="true"] .task-card:hover{transform:none}

@@ -114,8 +114,9 @@ new check timestamp with `observation:null` and a sanitized `fetch_error`.
 
 Only reference metadata and the normalized observation are saved in private DATA.
 No raw reports, credentials, platform prompts, or account IDs are imported. Successful
-result linkage is displayed separately from platform configuration, which remains
-unverified: task identity, enabled state, schedule, and next due time are unknown.
+result linkage is displayed separately from platform configuration. Without a separately
+imported official platform observation, task identity, enabled state, schedule, and
+next due time remain unknown. A result file is never evidence of scheduled execution.
 The underlying manual registry row is preserved and is not treated as scheduler truth.
 There is no background upstream polling and no network dependency in either viewer.
 
@@ -124,3 +125,43 @@ file using a consistent stopped-service copy or SQLite backup). Restoring DATA
 restores references and observed snapshots, not the real platform task. Reinstalling
 this viewer does not overwrite, clone, create, pause or resume the platform schedule.
 A fresh installation without DATA starts without these private associations.
+
+
+## Platform scheduler observations (read-only)
+
+`schedule-platform-import SCHEDULE_ID` imports one `dots-panel.platform-schedule.v1`
+JSON object from standard input after an authorized official platform read. This
+local CLI never calls a platform, configures a scheduler, or changes a task prompt.
+Register the local metadata row first. The exact fields are:
+
+- `schema_version`: `dots-panel.platform-schedule.v1`
+- `platform`: `dot`; `task_id`: the actual returned platform identity
+- `title`, `enabled` (boolean or null), `timezone` (valid IANA name)
+- `timing_mode`: `exact_schedule`, `flexible_schedule` or `condition_watch`
+- `schedule`: original bounded VEVENT string or null when unavailable
+- `last_run_at`, `next_run_at`: original timezone ISO timestamps or null
+- `observed_at`: timezone ISO timestamp when the official read was performed
+
+A supported VEVENT has exactly BEGIN:VEVENT, DTSTART, RRULE and END:VEVENT lines.
+The validator accepts a conservative recurrence subset; unsupported syntax must be
+reported rather than silently rewritten. It rejects duplicate recurrence fields,
+invalid date/time ranges, timezone mismatch and unrelated VEVENT properties.
+
+Imports reject older observations, conflicting same-time observations and silent
+identity replacement. Exact retries are idempotent and preserve import time. A
+platform identity can be associated with only one local row. The existing local
+registry metadata and external result snapshot remain unchanged. Snapshot output
+adds `platform_observation`, with epoch `observed_at` and `synced_at`, `sync_mode`
+`manual`, and `first_scheduled_execution` `unverified`. A platform last-run timestamp
+is not proof that the work or delivery succeeded. In particular, a manual trial
+result must not be treated as the first scheduled execution of a newly created task.
+
+Display next run as unknown when the official tool did not return it, even if the
+recurrence appears calculable. UI refreshes reread local data only. A fresh official
+read and explicit import are necessary for a newer observation; no credentials,
+account prompts, poller, timer or authentication server are part of this adapter.
+
+Consistent private DATA backups preserve both platform associations and result
+references. Restoring them only restores observations, never creates or clones
+a real platform task. Recovery must recheck current official state before claiming
+it is enabled or its next execution is known.

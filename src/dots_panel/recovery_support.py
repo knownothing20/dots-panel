@@ -59,6 +59,18 @@ class RecoveryStoreMixin:
                            (time.time(),project,'system',stage,'负责人 / Owner: '+name+' · '+effective_type,task_id,'verified'))
         return {'agent_id':agent_id,'task_id':task_id}
 
+    def agent_run_assign(self, run_id, agent_id, work_type='unspecified'):
+        from .app import WORK_TYPES
+        if work_type not in WORK_TYPES: raise ValueError('Invalid assignment work type')
+        with self.connect() as db:
+            if not db.execute('SELECT 1 FROM agents WHERE id=?',(agent_id,)).fetchone():
+                raise ValueError('Unknown agent ID')
+            if not db.execute('SELECT 1 FROM runs WHERE id=?',(run_id,)).fetchone():
+                raise ValueError('Unknown run ID')
+            db.execute('INSERT INTO agent_run_assignments VALUES(?,?,?,?) ON CONFLICT(run_id,agent_id) DO UPDATE SET work_type=excluded.work_type',
+                       (run_id,agent_id,work_type,time.time()))
+        return {'run_id':run_id,'agent_id':agent_id,'record_only':True}
+
     def agent_register(self, key, name, avatar='mint', name_en=''):
         with self.connect() as db:
             if db.execute('SELECT 1 FROM agents WHERE id=?',(key,)).fetchone():

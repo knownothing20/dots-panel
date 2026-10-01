@@ -33,7 +33,7 @@ class RulesTests(unittest.TestCase):
         rules=ReadOnlyStore(self.store.directory).snapshot()['rules']
         self.assertIsNone(rules['skill_url']);self.assertTrue(rules['groups'])
     def test_navigation(self):
-        self.assertEqual(list(PAGE_NAMES)[-2:],['rules','about'])
+        self.assertEqual(list(PAGE_NAMES)[-3:],['rules','about','settings'])
         self.assertEqual(translate('规则','en'),'Rules')
     def test_html_is_metadata_only(self):
         self.store.register('sample','Sample','Example')

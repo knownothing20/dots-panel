@@ -1,7 +1,7 @@
 'use strict';
 // UI strings only. User-authored task names, projects and messages are never translated.
 globalThis.PanelLocale = (() => {
-  const english = {'来源未保留':'Source unavailable','历史状态未保留':'Historical state unavailable','恢复摘要':'Recovered summary',
+  const english = {'视频':'Video',"设置":"Settings", "语言与显示时区":"Language and display timezone", "语言":"Language", "显示时区":"Display timezone", "应用时区":"Apply timezone", "设置保存在本机":"Settings are saved locally", "默认北京时间；支持 IANA 时区。仅调整显示，不改变系统时间或任务调度。":"Beijing time by default; supports IANA timezones. Display only; system time and task schedules stay unchanged.",'来源未保留':'Source unavailable','历史状态未保留':'Historical state unavailable','恢复摘要':'Recovered summary',
     // Recovery reconstruction: translations for retained later UI contracts.
     "规则":"Rules",
     "关于与版本":"About & version",

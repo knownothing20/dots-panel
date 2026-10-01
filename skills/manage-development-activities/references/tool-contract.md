@@ -77,3 +77,16 @@ panel doctor
 ```
 
 Run doctor before proposing setup changes. It does not initialize missing DATA, migrate, install, connect an account or configure scheduling. Packaged source availability, account Skill installation, scheduler configuration and verified execution are separate facts. An installation-observe record requires actual evidence through the supported account/scheduler tools. Personal account rules stay personal and outside the project bundle. Do not infer verified setup or execution from a successful source check.
+
+## Native worker observations and parallel participants
+
+A native dispatch result proves only that supported worker identity/state at that observation. It is not a persisted cloud thread ID. Verify state through the current supported coordination interface; keep runtime identities out of panel text and shared source. Use panel-local friendly profile keys and manually observed timestamps.
+
+```sh
+panel agent-register "$PANEL_AGENT_KEY" --name "$FRIENDLY_NAME"
+panel agent-observe "$PANEL_AGENT_KEY" --status running --observed-at "$OBSERVED_AT" --note "$SANITIZED_OBSERVATION"
+panel agent-run-assign "$RUN_ID" "$PANEL_AGENT_KEY" --work-type development
+panel status
+```
+
+Use an existing profile for the same verified executor. `agent-run-assign` is idempotent per run/profile and permits parallel participants without replacing the activity's primary owner. It does not start a worker. Record unknown for unconfirmed/pending initialization. A finished worker turn becomes idle only after observation; waiting or incomplete goal runs remain open. When the installed CLI lacks this operation, record the tracking gap and upgrade only with authorization; never silently overwrite another assignment.

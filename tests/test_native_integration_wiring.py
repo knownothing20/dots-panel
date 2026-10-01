@@ -6,6 +6,7 @@ from dots_panel.desktop_view import Dashboard, PAGE_NAMES
 class NativeIntegrationWiringTests(TestCase):
     def viewer(self):
         view=Dashboard.__new__(Dashboard)
+        view.motion=Mock()
         view.tk=Mock();view.root=Mock();view.root.winfo_children.return_value=[]
         view.t=lambda value,**kwargs:value
         view.label=Mock(return_value=Mock());view.button=Mock(return_value=Mock());view.filter_chip=Mock(return_value=Mock())

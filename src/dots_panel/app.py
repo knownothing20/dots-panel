@@ -3,6 +3,7 @@ import argparse
 from .doctor import install_doctor, COMPONENTS, OBSERVATION_STATES
 from . import VERSION
 from .result_links import TABLE_SQL, MAX_IMPORT_BYTES, decode_import, import_result, attach_results
+from .platform_schedules import TABLE_SQL as PLATFORM_TABLE_SQL, import_observation, attach_observations
 import errno
 import hashlib
 from datetime import datetime, timezone
@@ -68,16 +69,19 @@ def skill_publication_label(value, language="zh"):
     labels = {"unknown": ("发布未核验", "Publication unverified"), "pending": ("待发布", "Pending publication"), "published": ("已核验发布", "Publication checked"), "not_applicable": ("不随项目发布", "Not bundled for publication")}
     return labels.get(value, labels["unknown"])[language == "en"]
 
-ARTIFACT_KINDS = ("report", "image", "document", "data", "other")
+ARTIFACT_KINDS = ("report", "image", "document", "data", "video", "other")
 
-ARTIFACT_SUFFIXES = (".txt", ".md", ".pdf", ".png", ".jpg", ".jpeg", ".webp", ".csv", ".json", ".xlsx", ".docx", ".pptx", ".zip", ".html")
+ARTIFACT_SUFFIXES = (".txt", ".md", ".pdf", ".png", ".jpg", ".jpeg", ".webp", ".csv", ".json", ".xlsx", ".docx", ".pptx", ".zip", ".html", ".mp4")
 
 MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
 
 LIBRARY_XATTRS = ("user.library-file-id", "user.library-file-version")
 
+from .outputs import output_summaries, validate_mp4_header
+
+
 def artifact_kind_label(value, language="zh"):
-    labels = {"report": ("报告", "Report"), "image": ("图片", "Image"), "document": ("文档", "Document"), "data": ("数据", "Data"), "other": ("其他", "Other")}
+    labels = {"video": ("视频", "Video"), "report": ("报告", "Report"), "image": ("图片", "Image"), "document": ("文档", "Document"), "data": ("数据", "Data"), "other": ("其他", "Other")}
     return labels.get(value, labels["other"])[1 if language == "en" else 0]
 
 WORK_TYPES = {
@@ -99,25 +103,24 @@ def work_type_label(value, language="zh"):
 
 def agent_work(snapshot, agent):
     """Ownership and lifecycle do not independently prove current work."""
-    assignments = {a["task_id"]: a for a in snapshot.get("agent_assignments", []) if a.get("agent_id") == agent["id"]}
-    latest = {}
-    for run in snapshot.get("runs", []):
-        key = run["task_id"]
-        if key not in latest or (run.get("started", 0), run.get("id", "")) > (latest[key].get("started", 0), latest[key].get("id", "")):
-            latest[key] = run
+    primary = [a for a in snapshot.get("agent_assignments", []) if a.get("agent_id") == agent["id"]]
+    scoped = [a for a in snapshot.get("agent_run_assignments", []) if a.get("agent_id") == agent["id"]]
+    runs = snapshot.get("runs", [])
     result = {"current": [], "unfinished": [], "recent": []}
     for task in snapshot.get("tasks", []):
-        if task["id"] not in assignments:
-            continue
-        assignment = assignments[task["id"]]
-        status = latest.get(task["id"], {}).get("status") or task.get("latest_status") or "pending"
-        row = {"task": task, "work_type": assignment.get("work_type", "unspecified"), "status": status}
-        if status == "pending" or status in OPEN_STATUSES:
-            result["unfinished"].append(row)
-            if agent.get("status") == "running" and status == "running":
-                result["current"].append(row)
-        else:
-            result["recent"].append(row)
+        links = [(r, a) for a in scoped for r in runs if a["run_id"] == r["id"] and r["task_id"] == task["id"]]
+        owner = next((a for a in primary if a["task_id"] == task["id"]), None)
+        if not links and owner:
+            links = [(r, owner) for r in runs if r["task_id"] == task["id"]] or [(None, owner)]
+        for run, assignment in links:
+            status = run["status"] if run else task.get("latest_status") or "pending"
+            row = {"task": task, "run_id": run["id"] if run else None, "work_type": assignment.get("work_type", "unspecified"), "status": status}
+            if status == "pending" or status in OPEN_STATUSES:
+                result["unfinished"].append(row)
+                if agent.get("status") == "running" and status == "running":
+                    result["current"].append(row)
+            else:
+                result["recent"].append(row)
     return result
 
 def artifact_delivery_label(artifact, language="zh"):
@@ -301,6 +304,10 @@ class Store(RecoveryStoreMixin):
             CREATE TABLE IF NOT EXISTS agent_assignments (
               task_id TEXT PRIMARY KEY REFERENCES tasks(id),
               agent_id TEXT NOT NULL REFERENCES agents(id), assigned_at REAL NOT NULL);
+            CREATE TABLE IF NOT EXISTS agent_run_assignments (
+              run_id TEXT NOT NULL REFERENCES runs(id), agent_id TEXT NOT NULL REFERENCES agents(id),
+              work_type TEXT NOT NULL, assigned_at REAL NOT NULL,
+              PRIMARY KEY(run_id,agent_id));
             CREATE TABLE IF NOT EXISTS installation_observations (
               id INTEGER PRIMARY KEY, component TEXT NOT NULL, status TEXT NOT NULL,
               evidence TEXT NOT NULL, observed_at REAL NOT NULL, recorded_at REAL NOT NULL,
@@ -351,6 +358,7 @@ class Store(RecoveryStoreMixin):
               created REAL NOT NULL, message TEXT NOT NULL);
             """)
             db.execute(TABLE_SQL)
+            db.execute(PLATFORM_TABLE_SQL)
             run_columns = {row[1] for row in db.execute("PRAGMA table_info(runs)")}
             for field in ("lifecycle_reason", "next_step", "lifecycle_evidence"):
                 if field not in run_columns:
@@ -546,6 +554,10 @@ class Store(RecoveryStoreMixin):
             db.execute("INSERT INTO schedules VALUES(?,?,?,?,?,?,?,?)", (key, text(name, 120), text(project, 120), text(source, 120), state, next_run, now, now))
         return key
 
+    def schedule_platform_import(self, key, value):
+        with self.connect() as db:
+            return import_observation(db, key, value)
+
     def schedule_result_import(self, key, value):
         with self.connect() as db:
             return import_result(db, key, value)
@@ -610,6 +622,13 @@ class Store(RecoveryStoreMixin):
             info = os.fstat(original.fileno())
             if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_ARTIFACT_BYTES:
                 raise ValueError("Artifact must be a regular file of at most 32 MiB")
+            if source.suffix.lower() == ".mp4":
+                if kind != "video":
+                    raise ValueError("MP4 files must be registered as video metadata")
+                validate_mp4_header(original.read(4096), info.st_size)
+                original.seek(0)
+            elif kind == "video":
+                raise ValueError("Only MP4 metadata-only video registration is supported")
             attributes = {}
             if hasattr(os, "getxattr"):
                 for attribute in LIBRARY_XATTRS:
@@ -641,6 +660,7 @@ class Store(RecoveryStoreMixin):
                     fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=destination)
                     created = True
                     digest, size = hashlib.sha256(), 0
+                    copied_header = b""
                     with os.fdopen(fd, "wb") as output:
                         while True:
                             chunk = original.read(1024 * 1024)
@@ -649,12 +669,16 @@ class Store(RecoveryStoreMixin):
                             size += len(chunk)
                             if size > MAX_ARTIFACT_BYTES:
                                 raise ValueError("Artifact grew beyond 32 MiB")
+                            if len(copied_header) < 4096:
+                                copied_header += chunk[:4096-len(copied_header)]
                             digest.update(chunk)
                             output.write(chunk)
                         output.flush()
                         for attribute, value in attributes.items():
                             os.setxattr(output.fileno(), attribute, value)
                         os.fsync(output.fileno())
+                    if source.suffix.lower() == ".mp4":
+                        validate_mp4_header(copied_header, size)
                     after = os.fstat(original.fileno())
                     if (info.st_size, info.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
                         raise ValueError("Source changed while copying; retry after it is finished")
@@ -928,6 +952,7 @@ class Store(RecoveryStoreMixin):
             bindings = [dict(r) for r in db.execute("SELECT * FROM task_bindings ORDER BY synced_at DESC LIMIT 500")]
             schedules = [dict(r) for r in db.execute("SELECT * FROM schedules ORDER BY created DESC LIMIT 500")]
             attach_results(db, schedules)
+            attach_observations(db, schedules)
             tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             rules_row = db.execute("SELECT skill_url FROM rules_config WHERE id=1").fetchone() if "rules_config" in tables else None
             rules = project_rules()
@@ -939,6 +964,7 @@ class Store(RecoveryStoreMixin):
             release_row = db.execute("SELECT * FROM release_observation WHERE id=1").fetchone() if "release_observation" in tables else None
             release = dict(release_row) if release_row else {"repo_url": None, "release_status": "unknown", "release_tag": None, "remote_commit": None, "sync_status": "unknown", "checked_at": None}
             artifacts = [dict(r) for r in db.execute("SELECT * FROM artifacts ORDER BY created DESC,id DESC")] if "artifacts" in tables else []
+            outputs = output_summaries(db)
             designations = [dict(r) for r in db.execute("SELECT * FROM artifact_designations ORDER BY created DESC,id DESC")] if "artifact_designations" in tables else []
             deliveries = [dict(r) for r in db.execute("SELECT * FROM artifact_delivery ORDER BY observed_at DESC,id DESC")] if "artifact_delivery" in tables else []
             closeouts = [dict(r) for r in db.execute("SELECT * FROM closeout_records ORDER BY created DESC,id DESC")] if "closeout_records" in tables else []
@@ -952,6 +978,7 @@ class Store(RecoveryStoreMixin):
                 record["completed_at"] = completions.get(record["id"])
             agents = [dict(r) for r in db.execute("SELECT * FROM agents ORDER BY created ASC,id ASC")]
             agent_assignments = [dict(r) for r in db.execute("SELECT * FROM agent_assignments ORDER BY assigned_at ASC,task_id ASC")]
+            agent_run_assignments = [dict(r) for r in db.execute("SELECT * FROM agent_run_assignments ORDER BY assigned_at,run_id,agent_id")] if "agent_run_assignments" in tables else []
             software = [dict(r) for r in db.execute("SELECT * FROM software ORDER BY created ASC LIMIT 100")]
         for item in software:
             kind = item["kind"]
@@ -972,7 +999,7 @@ class Store(RecoveryStoreMixin):
             latest_summary = max((item["created"] for item in activity if item.get("task_id") == run["task_id"] and item.get("stage") not in ("assignment", "work_type")), default=run["updated"])
             run["progress_updated"] = max(run["updated"], latest_summary) if run["tracking_mode"] == "manual" else run["updated"]
             run["stale"] = run["status"] in OPEN_STATUSES and now - run["progress_updated"] > stale_seconds
-        return {"recovery": recovery_notice(self.directory), "rules": rules, "about": {"installed_version": VERSION, "install_notes": INSTALL_NOTES, "release": release, "doctor": install_doctor(ROOT, self.directory)}, "artifacts": artifacts, "agents": agents, "agent_assignments": agent_assignments, "tasks": tasks, "runs": runs, "latest_runs": latest_runs, "closeouts": closeouts, "events": events, "activity": activity, "schedules": schedules, "software": software, "bindings": bindings, "stale_after_seconds": stale_seconds}
+        return {"output_summaries": outputs, "recovery": recovery_notice(self.directory), "rules": rules, "about": {"installed_version": VERSION, "install_notes": INSTALL_NOTES, "release": release, "doctor": install_doctor(ROOT, self.directory)}, "artifacts": artifacts, "agents": agents, "agent_assignments": agent_assignments, "agent_run_assignments": agent_run_assignments, "tasks": tasks, "runs": runs, "latest_runs": latest_runs, "closeouts": closeouts, "events": events, "activity": activity, "schedules": schedules, "software": software, "bindings": bindings, "stale_after_seconds": stale_seconds}
 
 
 
@@ -1031,7 +1058,7 @@ class Metrics:
 def make_server(store, port=8765):
     metrics = Metrics(store.directory)
     metrics.collect()
-    assets = {"/": ("index.html", "text/html; charset=utf-8"), "/style.css": ("style.css", "text/css; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"), "/i18n.js": ("i18n.js", "text/javascript; charset=utf-8"), "/workspace.js": ("workspace.js", "text/javascript; charset=utf-8")}
+    assets = {"/motion.css": ("motion.css", "text/css; charset=utf-8"), "/motion.js": ("motion.js", "text/javascript; charset=utf-8"), "/": ("index.html", "text/html; charset=utf-8"), "/style.css": ("style.css", "text/css; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"), "/i18n.js": ("i18n.js", "text/javascript; charset=utf-8"), "/workspace.js": ("workspace.js", "text/javascript; charset=utf-8")}
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "dots-panel"
@@ -1123,6 +1150,8 @@ def main():
     ingest.add_argument("--state", choices=("planned", "in_progress", "verified"), required=True)
     ingest.add_argument("--observed-at", required=True)
     ingest.add_argument("--observed-status", choices=OBSERVED_STATUSES)
+    platform_import = subs.add_parser("schedule-platform-import", help="Import explicit platform observation from stdin; no platform calls or scheduling")
+    platform_import.add_argument("id")
     result_import = subs.add_parser("schedule-result-import", help="Import a bounded, explicit result observation from stdin; no upstream fetch or scheduler change")
     result_import.add_argument("id")
     schedule = subs.add_parser("schedule-register", help="Record metadata only; never creates or starts a scheduler")
@@ -1210,6 +1239,9 @@ def main():
     assign = subs.add_parser("agent-assign")
     assign.add_argument("task_id"); assign.add_argument("agent_id")
     assign.add_argument("--replace", action="store_true"); assign.add_argument("--work-type", choices=tuple(WORK_TYPES), default="unspecified")
+    run_assign = subs.add_parser("agent-run-assign", help="Record parallel run participants; preserves primary owner")
+    run_assign.add_argument("run_id"); run_assign.add_argument("agent_id")
+    run_assign.add_argument("--work-type", choices=tuple(WORK_TYPES), default="unspecified")
     release = subs.add_parser("release-observe", help="Record manual evidence only; no network or publication")
     release.add_argument("--repo-url", required=True); release.add_argument("--release-status", choices=RELEASE_STATUSES, required=True)
     release.add_argument("--sync-status", choices=SYNC_STATUSES, required=True); release.add_argument("--checked-at", required=True)
@@ -1240,6 +1272,9 @@ def main():
             print(store.bind(args.task_id, args.source_type, args.thread_id, args.environment_kind, args.environment_id, args.observed_status, args.observed_at, args.url))
         elif args.command == "ingest":
             print(json.dumps(store.ingest(args.task_id, args.source_event_id, args.role, args.stage, args.state, args.message, args.observed_at, args.observed_status)))
+        elif args.command == "schedule-platform-import":
+            value = decode_import(sys.stdin.buffer.read(MAX_IMPORT_BYTES + 1))
+            print(json.dumps(store.schedule_platform_import(args.id, value), ensure_ascii=False))
         elif args.command == "schedule-result-import":
             value = decode_import(sys.stdin.buffer.read(MAX_IMPORT_BYTES + 1))
             print(json.dumps(store.schedule_result_import(args.id, value), ensure_ascii=False))
@@ -1284,6 +1319,8 @@ def main():
             print(store.agent_profile(args.id,args.name,args.avatar,args.name_en))
         elif args.command == "agent-observe":
             print(store.agent_observe(args.id,args.status,args.observed_at,args.note,args.note_en))
+        elif args.command == "agent-run-assign":
+            print(json.dumps(store.agent_run_assign(args.run_id,args.agent_id,args.work_type)))
         elif args.command == "agent-assign":
             print(json.dumps(store.agent_assign(args.task_id,args.agent_id,args.replace,args.work_type)))
         elif args.command == "release-observe":

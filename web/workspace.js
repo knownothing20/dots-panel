@@ -57,15 +57,21 @@ globalThis.PanelAgents = {
     return (labels[value]||labels.unspecified)[language==='en'?1:0];
   },
   work(state,agent) {
-    const links=new Map((state.agent_assignments||[]).filter(a=>a.agent_id===agent.id).map(a=>[a.task_id,a]));
+    const primary=(state.agent_assignments||[]).filter(a=>a.agent_id===agent.id);
+    const scoped=(state.agent_run_assignments||[]).filter(a=>a.agent_id===agent.id);
     const result={current:[],unfinished:[],recent:[]};
-    for(const row of PanelWorkspace.rows(state.tasks||[],state.runs||[])){
-      const link=links.get(row.task.id);if(!link)continue;
-      const entry={task:row.task,status:row.status,work_type:link.work_type||'unspecified'};
-      if(['pending','running','waiting_user','waiting_external','paused','awaiting_review'].includes(row.status)){
-        result.unfinished.push(entry);
-        if(agent.status==='running'&&row.status==='running')result.current.push(entry);
-      }else result.recent.push(entry);
+    for(const task of state.tasks||[]){
+      let links=scoped.flatMap(a=>(state.runs||[]).filter(r=>r.id===a.run_id&&r.task_id===task.id).map(run=>({run,link:a})));
+      const owner=primary.find(a=>a.task_id===task.id);
+      if(!links.length&&owner){links=(state.runs||[]).filter(r=>r.task_id===task.id).map(run=>({run,link:owner}));if(!links.length)links=[{run:null,link:owner}];}
+      for(const {run,link} of links){
+        const status=run?.status||task.latest_status||'pending';
+        const entry={task,run_id:run?.id||null,status,work_type:link.work_type||'unspecified'};
+        if(['pending','running','waiting_user','waiting_external','paused','awaiting_review'].includes(status)){
+          result.unfinished.push(entry);
+          if(agent.status==='running'&&status==='running')result.current.push(entry);
+        }else result.recent.push(entry);
+      }
     }
     return result;
   }

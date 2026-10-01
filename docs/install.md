@@ -17,7 +17,7 @@ SOURCE/                    # 克隆的 dots-panel 仓库，仅源代码
   docs/
   README.md AGENTS.md LICENSE .gitignore
 DATA/                      # SOURCE 的同级独立目录，不受 Git 管理
-  config/ui.json           # 原生界面语言偏好，首次选择后保存
+  config/ui.json           # 原生界面语言与时区偏好，首次选择后保存
   db/panel.sqlite3          # 任务、运行、步骤、项目沟通摘要
   logs/server.log           # Web 辅助启动输出；不记录 HTTP 请求路径
   logs/desktop.log          # 原生桌面诊断，不弹出终端

@@ -1,3 +1,4 @@
+from contextlib import closing
 """Synthetic explicit result observations; no account or network fixtures."""
 import sqlite3
 import tempfile
@@ -69,7 +70,7 @@ class ResultLinkTests(unittest.TestCase):
         self.store.schedule_result_import('example',fixture())
         destination=Path(self.temp.name)/'restore'
         restored=Store(destination)
-        with sqlite3.connect(self.store.path) as source,sqlite3.connect(restored.path) as target:source.backup(target)
+        with closing(sqlite3.connect(self.store.path)) as source,closing(sqlite3.connect(restored.path)) as target:source.backup(target)
         self.assertEqual(self.store.snapshot()['schedules'],restored.snapshot()['schedules'])
     def test_old_readonly_schema_tolerated(self):
         with self.store.connect() as db:db.execute('DROP TABLE schedule_results')
