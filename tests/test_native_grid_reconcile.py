@@ -40,6 +40,7 @@ class CardGridReconcileTests(unittest.TestCase):
         v.workspace_filter = 'all'
         v.search_query = SimpleNamespace(get=lambda: '')
         v.workspace_toolbar = Mock()
+        v.backup_card = Mock(return_value=lambda: None)
         v.area = GridWidget()
         v.scroll_area = lambda: v.area
         v.resource_card = lambda parent: GridCanvas(parent)

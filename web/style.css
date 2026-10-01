@@ -237,3 +237,13 @@ button,select{min-height:40px}.nav{color:#596d60;font-size:15px}.nav-label,.eyeb
 .schedule-row strong{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;max-height:44px;line-height:22px;overflow:hidden}
 .schedule-row small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
 @media(max-width:640px){.activity-toolbar{grid-template-columns:minmax(0,1fr) auto}.activity-toolbar .activity-search{grid-column:1 / -1;justify-self:end;width:min(100%,220px)}.activity-toolbar #activity-tabs .filter-chip{font-size:11px;padding:6px 7px}}
+
+/* Private read-only recovery evidence; wrap long configured paths on narrow screens. */
+.backup-compact {margin-top:16px}.backup-compact p,.backup-card p {line-height:1.6}
+.backup-card {margin-top:20px;max-width:100%}.backup-card dl {margin:0;width:100%}
+.backup-row {display:grid;grid-template-columns:minmax(130px, .32fr) minmax(0, 1fr);gap:18px;padding:11px 0;border-bottom:1px solid var(--line,#e4ebe1)}
+.backup-row dt {color:var(--muted,#6d7868)}.backup-row dd {margin:0;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
+.backup-card #backup-note,.backup-compact small,.backup-about p {color:var(--muted,#6d7868);line-height:1.7}
+.backup-about {margin-top:24px}.backup-about p {max-width:900px}
+@media(max-width:600px){.backup-row{grid-template-columns:1fr;gap:5px}.backup-card{padding:18px}.backup-compact .section-heading{gap:12px;flex-wrap:wrap}}
+.backup-warning {color:#95651d}

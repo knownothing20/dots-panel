@@ -46,6 +46,7 @@ def validate_timezone(value):
 
 from .motion import Motion
 from .exit_region import label as exit_region_label
+from .backup_status import presentation as backup_presentation
 
 from .app import (Metrics, Store, ROOT, default_data_dir, agent_text, agent_work, work_type_label,
                   verified_skill_url, skill_status_label, skill_version_label)
@@ -855,6 +856,8 @@ class Dashboard:
         last_region=[region_info]
         self.fit_card(timezone_card, timezone_box)
 
+        refresh_backup = self.backup_card(area)
+
         motion_card, motion_box = self.card(area, 150)
         motion_card.pack(fill="x", pady=(0, 14))
         self.motion_preference = self.tk.BooleanVar(self.root, value=self.motion.reduced)
@@ -873,7 +876,61 @@ class Dashboard:
             region=self.snapshot.get('exit_region');info=exit_region_label(region,self.language)
             if region:info+=' · ipwho.is · '+self.stamp(region['checked_at'])
             if info!=last_region[0]:region_label.configure(text=info);last_region[0]=info
+            refresh_backup()
         self.background_refresh=refresh_settings
+
+    def backup_card(self, parent, compact=False):
+        """Patch only changed backup labels; keep the page, focus and scroll intact."""
+        card, box = self.card(parent, 150 if compact else 400)
+        card.pack(fill='x', pady=(0, 14))
+        en = self.language == 'en'
+        self.label(box, 'Backup & recovery' if en else '备份与恢复', 19, bold=True, raw=True).pack(anchor='w', pady=(0, 8))
+        status = self.label(box, '', 15, self.accent, raw=True, wrap=760)
+        status.pack(anchor='w', pady=(0, 7))
+        watch_status = self.label(box, '', 14, self.muted, raw=True, wrap=760)
+        watch_status.pack(anchor='w', pady=(0, 7))
+        details = self.tk.Frame(box, bg=self.panel)
+        details.pack(fill='x')
+        update_rows = self.keyed_labels(details)
+        note = self.label(box, '', 13, self.muted, raw=True, wrap=760)
+        note.pack(anchor='w', pady=(7, 0))
+        if compact:
+            self.filter_chip(box, 'View backup details →' if en else '查看备份详情 →', lambda: self.navigate('settings')).pack(anchor='w', pady=(9, 0))
+        else:
+            def copy_location():
+                value = self.snapshot.get('backup') or {}
+                location = (value.get('destination') or {}).get('path')
+                if location:
+                    self.root.clipboard_clear()
+                    self.root.clipboard_append(location)
+            self.filter_chip(box, 'Copy Library path' if en else '复制 Library 路径', copy_location).pack(anchor='w', pady=(9, 0))
+        saved = {}
+        def refresh_backup():
+            value = backup_presentation(self.snapshot.get('backup'), self.language, self.stamp)
+            if saved.get('title') != value['compact']:
+                warning = (self.snapshot.get('backup') or {}).get('status') in ('failed', 'unavailable', 'unverified', 'stale', 'pending')
+                status.configure(text=value['compact'], fg='#9c611c' if warning else self.accent)
+                saved['title'] = value['compact']
+            if saved.get('watch') != value['watch_compact']:
+                watch_status.configure(text=value['watch_compact'])
+                saved['watch'] = value['watch_compact']
+            rows = [] if compact else [(key, title + ' · ' + text) for key, title, text in value['rows']]
+            update_rows(rows)
+            caption = ('Local historical evidence; remote state is not queried live.' if en else '本机历史回执；未实时查询远端状态。') if compact else value['note']
+            if saved.get('note') != caption:
+                note.configure(text=caption)
+                saved['note'] = caption
+        def wrap(event):
+            width = max(140, event.width - 10)
+            status.configure(wraplength=width)
+            watch_status.configure(wraplength=width)
+            note.configure(wraplength=width)
+            for child in details.winfo_children():
+                child.configure(wraplength=width)
+        box.bind('<Configure>', wrap, add='+')
+        refresh_backup()
+        self.fit_card(card, box)
+        return refresh_backup
 
     def change_motion(self):
         self.motion.reduced = self.motion_preference.get()
@@ -1542,7 +1599,7 @@ class Dashboard:
     def view_signature(self):
         now = time.time()
         fresh = tuple(sorted((agent['id'],agent.get('status')) for agent in self.snapshot.get('agents',[]) if agent_observation(agent,self.snapshot,now)['recent']))
-        fields={'software':('software',),'schedules':('schedules',),'rules':('rules',),'about':('about',),'settings':('exit_region',)}.get(self.page)
+        fields={'software':('software',),'schedules':('schedules',),'rules':('rules',),'about':('about',),'settings':('exit_region','backup')}.get(self.page)
         visible={key:self.snapshot.get(key) for key in fields} if fields else self.snapshot
         return (self.page,self.selected_task,self.language,self.workspace_filter,self.search_query.get(),fresh if fields is None else (),display_signature(visible))
 
@@ -1849,6 +1906,8 @@ class Dashboard:
             if len(filtered)>4:
                 more.configure(text=self.t('另有 {count} 个任务，可在任务页查看',count=len(filtered)-4));more.pack(anchor='w',pady=(0,10),before=bottom)
             else:more.pack_forget()
+        refresh_backup = self.backup_card(area, compact=True)
+        self.live_updates.append(refresh_backup)
         reconcile();self.background_refresh=reconcile
 
 
@@ -2563,6 +2622,9 @@ class Dashboard:
         refresh_doctor=self.render_install_doctor(area,self.snapshot.get('about',{}).get('doctor',{}))
         self.label(area,'Installation notes' if en else '本安装更新说明',17,bold=True,raw=True).pack(anchor='w',pady=(12,7))
         notes=self.tk.Frame(area,bg=self.bg);notes.pack(fill='x');update_notes=self.keyed_labels(notes)
+        self.label(area, 'Cloud workspace & recovery' if en else '云工作区与恢复', 17, bold=True, raw=True).pack(anchor='w', pady=(15, 7))
+        self.label(area, 'Cloud computers can retain state between uses, but local files alone are not a durability guarantee. Workspace directories have been observed unavailable; the cause is unconfirmed, not evidence of a daily reset. Recovery relies on the last verified private Library snapshot. GitHub contains source only, never private DATA.' if en else '云电脑可在使用之间保留状态，但本机文件不能单独作为持久保存保证。曾观察到工作区目录不可用，原因未确认，不能据此断言每天重置。恢复以私有 Library 最后核验快照为准；GitHub 只同步源码，不含私有 DATA。', 14, self.muted, raw=True, wrap=800).pack(anchor='w', pady=(0, 8))
+        self.filter_chip(area, 'Backup details →' if en else '查看备份与恢复 →', lambda: self.navigate('settings')).pack(anchor='w')
         self.label(area,'Local version is not remote release status. Manually verified observations; no live update or publication.' if en else '本地版本不等于远端发布状态；这里只读展示人工核验记录，不更新安装或发布。',14,self.muted,raw=True,wrap=800).pack(anchor='w',pady=(15,5))
         def refresh():
             about=self.snapshot.get('about',{});release=about.get('release',{});state=lambda key:labels.get(key,labels['unknown'])[1 if en else 0]

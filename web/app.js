@@ -334,6 +334,54 @@ function renderAbout(about={}){
   }else $('about-repository').append(element('p',t('尚未登记已核验的 GitHub 项目'),'empty-caption'));
   $('about-notes').replaceChildren();for(const item of about.install_notes||[])$('about-notes').append(element('p','• '+(item[language]||'')));
 }
+function backupView(value={}) {
+  const names={unconfigured:['未配置备份展示','Backup display not configured'],unavailable:['备份记录不可用','Backup records unavailable'],unverified:['尚无可核验恢复点','No verified recovery point'],verified:['有已核验恢复点','Verified recovery point recorded'],stale:['恢复记录较旧','Recovery evidence is older'],failed:['最近尝试受阻','Latest attempt blocked'],pending:['有未完成尝试记录','Pending attempt recorded']};
+  const title=(names[value.status]||names.unconfigured)[language==='en'?1:0],point=value.last_verified,destination=value.destination,attempt=value.last_attempt,unknown=phrase('未知','Unknown');
+  const watch=value.task_watch||{},watchNames={unverified:['巡检未核验','Task checks unverified'],checked:['最近任务巡检成功','Last task check succeeded'],stale:['任务巡检记录较旧','Task check observation is older'],failed:['任务巡检失败','Task check failed'],unavailable:['任务巡检不可用','Task checks unavailable'],record_unavailable:['巡检记录不可用','Task check records unavailable'],invalid:['巡检记录无效','Task check record invalid']};
+  const watchTitle=(watchNames[watch.status]||watchNames.unverified)[language==='en'?1:0],watchSuccess=watch.last_success_at?stamp(watch.last_success_at):unknown;
+  const watchCompact=watchTitle+' · '+phrase('最后成功：','Last successful: ')+watchSuccess;
+  const rows=[
+    ['destination',phrase('私有备份目的地','Private destination'),destination?(destination.label===destination.provider||destination.label.startsWith(destination.provider+' · ')?destination.label:destination.provider+' · '+destination.label):unknown],
+    ['path',phrase('Library 路径','Library path'),destination?.path||unknown],
+    ['state',phrase('本机状态目录','Local state directory'),value.state_dir||unknown],
+    ['snapshot',phrase('最后核验快照','Last verified snapshot'),point?stamp(point.captured_at):unknown],
+    ['verified',phrase('恢复核验时间','Restore verification time'),point?stamp(point.verified_at):unknown],
+    ['version',phrase('已记录索引版本','Recorded index version'),point?String(point.index_version):unknown],
+  ];
+  if(point)rows.push(['scope',phrase('已核验清单','Verified inventory'),phrase(`源码 ${point.source_file_count} · 数据 ${point.data_file_count} · 外部固定依赖 ${point.external_file_count} · checkpoint ${point.checkpoint_count}`,`Source ${point.source_file_count} · Data ${point.data_file_count} · Pinned external dependencies ${point.external_file_count} · Checkpoints ${point.checkpoint_count}`)],['exclusions',phrase('清单排除记录','Recorded exclusions'),String(point.exclusion_count)],['logical_size',phrase('快照逻辑体积（非云端占用）','Snapshot logical size (not cloud storage use)'),Number.isSafeInteger(point.size_bytes)?point.size_bytes.toLocaleString('en-US')+' bytes':unknown]);
+  rows.push(
+    ['attempt',phrase('最近尝试观察','Last attempt observation'),attempt?stamp(attempt.checked_at)+' · '+attempt.stage+' · '+attempt.result+(attempt.error_type?' · '+attempt.error_type:''):unknown],
+    ['watch_check',phrase('任务巡检最近检查','Last task check attempt'),watch.checked_at?stamp(watch.checked_at):unknown],
+    ['watch_success',phrase('任务巡检最后成功','Last successful task check'),watchSuccess],
+    ['watch_error',phrase('任务巡检错误类别','Task check error type'),watch.error_type||unknown],
+    ['quota',phrase('Library 容量与剩余额度','Library quota and free capacity'),unknown],
+    ['live',phrase('远端当前状态','Current remote state'),phrase('未实时查询；本页只读本机历史回执','Not queried live; local historical receipts only')],
+    ['limits',phrase('覆盖边界','Coverage limits'),phrase('按已核验清单恢复源码、数据库、登记文件与选定 checkpoint；不恢复平台会话、账户 Skill 或调度器','Restore source, database, registered files and selected checkpoints per the verified manifest; not platform sessions, account Skills or schedulers')],
+    ['excluded',phrase('默认排除','Excluded by default'),phrase('凭据、cookie、环境秘密、日志、缓存、逐帧渲染及未授权目录；具体以冻结 policy 和清单为准','Credentials, cookies, environment secrets, logs, caches, render frames and unapproved folders; frozen policy and manifest are authoritative')]
+  );
+  let note=phrase('本机缓存不是异地备份；恢复必须先在全新私有目录核验。快照之后的进展未必已备份。','Local cache is not an off-machine backup. Verify recovery in a new private directory first. Progress after the snapshot may not be backed up.');
+  if(value.observation_state==='invalid')note=phrase('最近尝试观察无效；保留已核验恢复点。','Latest attempt observation is invalid; retaining the verified recovery point. ')+note;
+  if(point?.hydrated)note+=phrase(' 本机状态由远端回读重建，不代表原历史提交过程已独立证明。',' Local state was rebuilt from remote readback; original historical commit steps were not independently proven.');
+  return {title,rows,note,watchCompact,compact:title+(point?' · '+phrase('最后核验快照：','Last verified snapshot: ')+stamp(point.captured_at):'')};
+}
+function renderBackup(value={}) {
+  const view=backupView(value);
+  textPatch('backup-title',phrase('备份与恢复','Backup & recovery'));
+  textPatch('backup-summary-title',phrase('备份与恢复','Backup & recovery'));
+  textPatch('backup-details-link',phrase('查看详情','View details'));
+  textPatch('backup-summary-status',view.compact);
+  textPatch('task-watch-summary',view.watchCompact);textPatch('task-watch-status',view.watchCompact);
+  textPatch('backup-summary-note',phrase('本机历史回执；未实时查询远端状态。','Local historical evidence; remote state is not queried live.'));
+  textPatch('backup-status',view.title);textPatch('backup-note',view.note);
+  const warning=['failed','unavailable','unverified','stale','pending'].includes(value.status);
+  $('backup-status').classList.toggle('backup-warning',warning);$('backup-summary-status').classList.toggle('backup-warning',warning);
+  const rows=view.rows.map(([key,title,value])=>{const row=element('div','','backup-row');row.dataset.patchKey='backup:'+key;row.append(element('dt',title),element('dd',value));return row;});
+  PanelPatch.children($('backup-rows'),rows);
+  textPatch('backup-about-title',phrase('云工作区与恢复','Cloud workspace & recovery'));
+  textPatch('backup-about-note',phrase('云电脑可在使用之间保留状态，但本机文件不能单独作为持久保存保证。曾观察到工作区目录不可用，原因未确认，不能据此断言每天重置。恢复以私有 Library 最后核验快照为准；GitHub 只同步源码，不含私有 DATA。','Cloud computers can retain state between uses, but local files alone are not a durability guarantee. Workspace directories have been observed unavailable; the cause is unconfirmed, not evidence of a daily reset. Recovery relies on the last verified private Library snapshot. GitHub contains source only, never private DATA.'));
+  textPatch('backup-about-link',phrase('查看备份与恢复 →','Backup details →'));
+}
+
 function agentAvatar(agent) {
   const avatar=element('span','','agent-avatar fixed-portrait');
   avatar.setAttribute('aria-hidden','true');
@@ -585,6 +633,7 @@ function render(state,polling=false) {
   renderRules(state.rules);
 
   renderAbout(state.about);
+  renderBackup(state.backup);
   renderMetrics(state);
   const selected = $('task-filter').value;
   const taskChoices=JSON.stringify([language,...state.tasks.map(task=>[task.id,task.name])]);
@@ -739,9 +788,10 @@ function renderIncremental(input) {
   const state={...input,current_runs:PanelWorkspace.currentRuns(input)},previous=lastState,selected=$('task-filter').value,view=captureView(selected);
   lastState=state;
   const dataKeys=['tasks','runs','latest_runs','open_runs','current_runs','agents','agent_assignments','agent_run_assignments','assignment_episodes','activity','events','progress_updates','artifacts','output_summaries','closeouts','bindings','automation_bindings'];
-  const identical=[...dataKeys,'metrics','software','schedules','rules','about','recovery','timeline_window'].every(key=>JSON.stringify(state[key])===JSON.stringify(previous[key]));
+  const identical=[...dataKeys,'metrics','software','schedules','rules','about','recovery','timeline_window','backup'].every(key=>JSON.stringify(state[key])===JSON.stringify(previous[key]));
   if(identical&&!conversationRead.error)return;
   const changed=dataKeys.some(key=>JSON.stringify(state[key])!==JSON.stringify(previous[key]));
+  if(JSON.stringify(state.backup)!==JSON.stringify(previous.backup))renderBackup(state.backup);
   if(JSON.stringify(state.metrics)!==JSON.stringify(previous.metrics))renderMetrics(state);
   if(JSON.stringify(state.recovery)!==JSON.stringify(previous.recovery)){textPatch('recovery-notice',state.recovery?.[language==='en'?'notice_en':'notice_zh']||'');$('recovery-info').hidden=!state.recovery;}
   if(changed){
