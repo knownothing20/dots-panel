@@ -1,0 +1,11 @@
+'use strict';
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const source=fs.readFileSync('web/app.js','utf8');
+const start=source.indexOf('function headerRegion('),end=source.indexOf('async function refresh()',start);
+const context={phrase:(zh,en)=>zh,language:'zh',timezone:'Asia/Shanghai',Date,Intl};vm.createContext(context);vm.runInContext(source.slice(start,end),context);
+assert(context.headerRegion(null).includes('未核验'));
+const v={scope:'panel_backend_exit',provider:'ipwho.is',country:'Example',region:'Region',city:'City',checked_at:Date.now()/1000};
+assert(context.headerRegion(v).includes('Example'));assert(!context.headerStamp(0).includes('Shanghai'));assert(context.headerStamp(0).includes('08:00:00'));
+v.checked_at-=90000;assert(context.headerRegion(v).includes('旧观察'));
+assert(!source.includes('fetch(\'https://ipwho'));
+console.log('Exit region header: provenance scope, unknown/stale, local timezone semantics and no browser lookup passed');

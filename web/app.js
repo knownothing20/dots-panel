@@ -22,9 +22,11 @@ function translatePage() {
   document.title = phrase('dots panel · 本地工作台','dots panel · Local workspace');
   for (const [node,original] of staticText) { const core=original.trim(); node.textContent=original.replace(core,t(core)); }
   $('language').value = preference;
+  $('detail-scroll').setAttribute('aria-label',phrase('活动详情','Activity details'));
+  $('back-conversations').setAttribute('aria-label',phrase('返回活动列表','Back to activities')); 
   $('workspace-search').placeholder=t('搜索任务…');
   $('workspace-search').setAttribute('aria-label',t('搜索任务…'));
-  $('toggle-events').textContent=t($('toggle-events').getAttribute('aria-expanded')==='true'?'收起运行记录':'展开运行记录');
+  $('toggle-events').textContent=phrase($('toggle-events').getAttribute('aria-expanded')==='true'?'收起原始运行记录':'展开原始运行记录',$('toggle-events').getAttribute('aria-expanded')==='true'?'Hide raw run records':'Show raw run records');
 }
 const bytes = n => n == null ? t('未知') : n >= 2**30 ? `${(n/2**30).toFixed(1)} GB` : `${(n/2**20).toFixed(0)} MB`;
 const stamp = n => {
@@ -51,14 +53,45 @@ let workspaceFilter = 'all';
 let adviceTaskId=null;
 let detailTab='timeline';
 const detailScrollPositions={timeline:0,files:0};
-const expandedAgents=new Set();
+const expandedAgents=new Set(), expandedRules=new Set(), expandedDiagnostics=new Set(), expandedSteps=new Set();
+let renderedTaskId=null;
 const expandedSchedules=new Set(), expandedSoftware=new Set(), expandedSkills=new Set();
 let workspaceQuery = '';
 let lastState = null;
 function element(tag, text, className) { const node = document.createElement(tag); node.textContent = text; if (className) node.className = className; return node; }
+// Preserve open evidence, focused disclosure and the visible timeline item during polling.
+function disclosure(node,store,key) {
+  node.setAttribute('data-disclosure-key',key);node.open=store.has(key);
+  node.addEventListener('toggle',()=>{if(node.open)store.add(key);else store.delete(key);});
+  return node;
+}
+function captureView(selected) {
+  const scroll=$('detail-scroll'),sameTask=renderedTaskId===selected;
+  const position={page:window.scrollY||0,detail:sameTask?(scroll.scrollTop||0):0,sameTask,focus:document.activeElement?.dataset?.focusKey||null,scope:document.activeElement?.closest?.('[data-page]')?.dataset.page||null};
+  const active=document.activeElement;
+  if(active?.tagName==='SUMMARY')position.disclosure=active.parentElement?.dataset?.disclosureKey;
+  if(sameTask&&position.detail>0&&scroll.getBoundingClientRect){
+    const top=scroll.getBoundingClientRect().top;
+    const anchor=[...scroll.querySelectorAll('[data-timeline-key]')].find(node=>node.getBoundingClientRect().bottom>top);
+    if(anchor)position.anchor={key:anchor.dataset.timelineKey,offset:anchor.getBoundingClientRect().top-top};
+  }
+  return position;
+}
+function restoreView(position,selected) {
+  const scroll=$('detail-scroll');scroll.scrollTop=position.detail;
+  if(position.anchor&&scroll.querySelectorAll){
+    const anchor=[...scroll.querySelectorAll('[data-timeline-key]')].find(node=>node.dataset.timelineKey===position.anchor.key);
+    if(anchor)scroll.scrollTop+=anchor.getBoundingClientRect().top-scroll.getBoundingClientRect().top-position.anchor.offset;
+  }
+  if(position.disclosure){const details=[...document.querySelectorAll('details[data-disclosure-key]')].find(node=>node.dataset.disclosureKey===position.disclosure&&(!position.scope||node.closest?.('[data-page]')?.dataset.page===position.scope));details?.querySelector('summary')?.focus({preventScroll:true});}
+  if(position.focus){const control=[...document.querySelectorAll('[data-focus-key]')].find(node=>node.dataset.focusKey===position.focus&&(!position.scope||node.closest?.('[data-page]')?.dataset.page===position.scope));control?.focus({preventScroll:true});}
+  // Instant restoration avoids smooth-scroll drift after repeated background refreshes.
+  if(window.scrollTo&&window.scrollY!==position.page)window.scrollTo({top:position.page,left:0,behavior:'instant'});
+  renderedTaskId=selected;
+}
 // Keep controls mounted across polling so keyboard focus and native select menus survive.
 function renderStatusFilters(state) {
-  const tasks=state.tasks, runs=state.latest_runs||state.runs;
+  const tasks=state.tasks, runs=state.current_runs||state.latest_runs||state.runs;
   const main=[['all',t('全部')],['unfinished',phrase('未完成','Unfinished')],['succeeded',phrase('已完成','Completed')]];
   for (const id of ['workspace-tabs','activity-tabs']) {
     const bar=$(id);
@@ -107,8 +140,10 @@ function schedulePlatformView(item) {
   const rule=String(p.schedule||'').split(/\r?\n/).find(line=>line.startsWith('RRULE:'))||'';
   const parts=Object.fromEntries(rule.slice(6).split(';').filter(p=>p.includes('=')).map(p=>p.split('=')));
   let compact=phrase('已记录计划；展开查看','Recorded schedule; expand for details');
-  if(parts.FREQ==='HOURLY'&&(!parts.INTERVAL||parts.INTERVAL==='1'))compact=phrase('每小时','Every hour');
-  else if(parts.FREQ==='DAILY'&&(!parts.INTERVAL||parts.INTERVAL==='1')&&/^\d+$/.test(parts.BYHOUR||'')&&/^\d+$/.test(parts.BYMINUTE||'0'))compact=phrase('每天 ','Daily ')+parts.BYHOUR.padStart(2,'0')+':'+(parts.BYMINUTE||'0').padStart(2,'0');
+  const simple=!Object.keys(parts).some(key=>!['FREQ','INTERVAL','BYHOUR','BYMINUTE','BYSECOND'].includes(key))&&!String(p.schedule||'').split(/\r?\n/).some(line=>/^(?:EXDATE|RDATE|EXRULE)/.test(line));
+  const hour=/^\d{1,2}$/.test(parts.BYHOUR||'')&&Number(parts.BYHOUR)<24,minute=/^\d{1,2}$/.test(parts.BYMINUTE||'0')&&Number(parts.BYMINUTE||0)<60;
+  if(simple&&parts.FREQ==='HOURLY'&&(!parts.INTERVAL||parts.INTERVAL==='1')&&!parts.BYHOUR&&minute)compact=phrase('每小时','Every hour')+(parts.BYMINUTE?phrase(' · 第 ',' · minute ')+parts.BYMINUTE.padStart(2,'0')+phrase(' 分',''):'');
+  else if(simple&&parts.FREQ==='DAILY'&&(!parts.INTERVAL||parts.INTERVAL==='1')&&hour&&minute)compact=phrase('每天 ','Daily ')+parts.BYHOUR.padStart(2,'0')+':'+(parts.BYMINUTE||'0').padStart(2,'0');
   return {label:phrase('平台观察 · ','Platform observed · ')+enabled,compact:compact+' · '+(p.timezone||unknown),rows:[
     [phrase('平台','Platform'),p.platform||unknown],[phrase('平台任务 ID','Platform task ID'),p.task_id||unknown],[phrase('已观察启用状态','Observed enabled state'),enabled],[phrase('调度时区','Schedule timezone'),p.timezone||unknown],[phrase('计划','Schedule'),p.schedule||unknown],[phrase('定时方式','Timing mode'),p.timing_mode||unknown],[phrase('上次运行','Last run'),p.last_run_at?stamp(p.last_run_at):unknown],[phrase('下次运行','Next run'),p.next_run_at?stamp(p.next_run_at):unknown],[phrase('平台观察时间','Platform observed at'),stamp(p.observed_at)],[phrase('首次定时执行','First scheduled execution'),phrase('尚未核验','Not yet verified')]]};
 }
@@ -169,16 +204,16 @@ function renderSchedules(schedules) {
     const head=element('div','','registry-heading');
     const title=element('h2',item.name);title.style.margin='0';title.style.overflowWrap='anywhere';
     const badge=element('span',platform?.label||result?.label||t(states[item.state]||item.state),'status');badge.style.whiteSpace='normal';head.append(title,badge);card.append(head);
-    if(platform)card.append(element('p',platform.compact));
+    if(platform){card.append(element('p',platform.compact,'schedule-cadence'));if(item.platform_observation.next_run_at)card.append(element('p',`${phrase('下次运行（观察）','Next run (observed)')}: ${stamp(item.platform_observation.next_run_at)}`,'schedule-next'));}
     if(item.project){const project=element('small',item.project);project.style.overflowWrap='anywhere';card.append(project);}
     if(result){
       for(const line of result.compact){const summary=element('p',line);summary.style.margin='4px 0';summary.style.overflowWrap='anywhere';card.append(summary);}
       if(result.error){const warning=element('p',result.error,'freshness-warning');warning.style.overflowWrap='anywhere';card.append(warning);}
     }
-    const details=element('details','','registry-details');details.open=expandedSchedules.has(item.id);details.append(element('summary',phrase('详情','Details')));
+    const details=element('details','','registry-details');details.dataset.disclosureKey='schedule:'+item.id;details.open=expandedSchedules.has(item.id);details.append(element('summary',phrase('详情','Details')));
     details.addEventListener('toggle',()=>{if(details.open)expandedSchedules.add(item.id);else expandedSchedules.delete(item.id);});
     const rows=[...(platform?.rows||[]),...(result?.rows||[])];
-    for(const [label,value] of rows){const line=element('p',`${label}: ${value}`);line.style.overflowWrap='anywhere';details.append(line);}
+    for(const [label,value] of rows){const line=element('p',`${label}: ${value}`);line.style.overflowWrap='anywhere';if(label===phrase('计划','Schedule')||label===phrase('平台任务 ID','Platform task ID'))line.className='technical-record';details.append(line);}
     details.append(element('p',`${t('来源')} · ${item.source}`),
       element('p',`${phrase('登记状态（元数据）','Registered state (metadata)')}: ${t(states[item.state]||item.state)}`),
       element('p',`${phrase('登记计划时间（未核验）','Registered planned time (unverified)')}: ${item.next_run==null?t('未知'):stamp(item.next_run)}`),
@@ -187,7 +222,7 @@ function renderSchedules(schedules) {
   }
   const note=element('p',phrase('每 5 秒只刷新本地数据，不轮询 GitHub；外部结果须手动同步','Every 5 seconds refreshes local data only, without polling GitHub; external results require manual sync'),'empty-caption');note.style.gridColumn='1 / -1';$('schedule-cards').append(note);
 }
-function selectTask(task,advice=false) {adviceTaskId=advice?task.id:null;$('task-filter').value=task.id;render(lastState);location.hash='conversations';showPage();if(advice)$('advice-text').focus();}
+function selectTask(task,advice=false) {if($('task-filter').value!==task.id){setDetailTab('timeline');detailScrollPositions.timeline=0;detailScrollPositions.files=0;$('detail-scroll').scrollTop=0;}adviceTaskId=advice?task.id:null;$('task-filter').value=task.id;render(lastState);location.hash='conversations';showPage();if(advice)$('advice-text').focus();}
 function outputSummary(state,taskId){return state.output_summaries?.[taskId]||{count:0,kinds:[],main:null};}
 function outputCountText(summary){
   if(!summary.count)return phrase('尚无已登记成果','No registered outputs');
@@ -215,25 +250,41 @@ function renderOutputBar(state,taskId){
   $('output-summary-note').textContent=phrase('仅显示已登记文件；归档不等于发送或验收。打开文件夹请使用云桌面原生面板。','Registered files only; archiving is not delivery or acceptance. Open folders in the native cloud desktop panel.');
 }
 function taskCard(task,run,state) {
+  const work=PanelWorkspace.workProgress(state,task.id,run);run=work.current_run||run;
   const status=run?.status||task.latest_status||'pending';
   const card=element('article','','task-card '+status);card.title=t('选择此活动，查看阶段与记录');
   const top=element('div','','task-card-top');top.append(element('span','▣','card-icon'),element('span',t(statuses[status]||status),'status '+status));
   card.append(top,element('h2',task.name),element('p',task.project,'task-project'),ownerBadge(task.id,state));
-  card.append(element('p',run?.lifecycle_reason||PanelWorkspace.summary(state.activity,task.id,language),'task-summary'));
-  const stages=new Map();for(const item of [...state.activity].sort((a,b)=>a.created-b.created)){if(item.task_id===task.id&&!['assignment','work_type','state_changed','closeout','recovered_summary'].includes(item.stage))stages.set(item.stage,item.state);}
-  const verified=[...stages.values()].filter(value=>value==='verified').length;
+  const summaryText=run?.lifecycle_reason||work.update?.current_step||work.latest?.message||phrase('尚无工作进展摘要','No work progress recorded');
+  card.append(element('small',run?.lifecycle_reason?phrase('状态原因','Status reason'):work.scope==='task'?phrase('任务最新摘要','Latest task update'):phrase('最近登记步骤','Latest recorded step'),'task-step-label'),element('p',summaryText,'task-summary'));
+  const nextStep=run?.lifecycle_reason?run.next_step:work.update?.next_step;
+  if(nextStep)card.append(element('p',phrase('下一步：','Next: ')+nextStep,'task-next'));
   const progress=element('div','','task-progress');
-  if(stages.size){const bar=element('div','','bar');const fill=element('i','');fill.style.width=`${verified/stages.size*100}%`;bar.append(fill);progress.append(bar,element('small',phrase(`已验证 ${verified} / ${stages.size} 个已记录阶段`,`${verified} / ${stages.size} recorded stages verified`)));}
-  else progress.append(element('small',t('尚无阶段记录')));
+  if(work.counts){const count=work.counts;const measure=element('progress','');measure.max=count.total;measure.value=count.completed;measure.setAttribute('aria-label',phrase('已登记实际进度','Recorded measured progress'));progress.append(measure,element('small',`${count.completed} / ${count.total} ${count.unit}`));}
+  else if(work.total)progress.append(element('small',phrase(`已验证 ${work.verified} / ${work.total} 个已记录阶段`,`${work.verified} / ${work.total} recorded stages verified`)));
+  if(work.steps.length){
+    const steps=disclosure(element('details','','task-steps'),expandedSteps,task.id);steps.append(element('summary',phrase(`步骤记录 · ${work.steps.length}`,`Recorded steps · ${work.steps.length}`)));
+    steps.addEventListener('click',event=>event.stopPropagation());
+    for(const step of work.steps.slice(0,4)){const line=element('div','','task-step');line.append(element('small',stamp(step.created)),element('p',step.message));steps.append(line);}
+    if(work.update?.evidence)steps.append(element('small',phrase('依据：','Evidence: ')+work.update.evidence));
+    if(work.steps.length>4)steps.append(element('small',phrase('其余记录见活动详情','More records in activity details')));
+    progress.append(steps);
+  }else progress.append(element('small',t('尚无阶段记录')));
   card.append(progress);
-  const bottom=element('div','','task-card-footer');bottom.append(element('span',`${t('最近更新')} ${stamp(run?.progress_updated||run?.updated||task.created)}`),element('span','↗'));card.append(bottom);
+  if(work.open_runs.length>1){
+    const parallel=disclosure(element('details','','task-steps'),expandedSteps,'parallel:'+task.id);parallel.append(element('summary',phrase(`并行未完成 · ${work.open_runs.length}`,`Unfinished runs · ${work.open_runs.length}`)));
+    parallel.addEventListener('click',event=>event.stopPropagation());
+    for(const entry of work.open_runs){const line=element('div','','task-step');line.append(element('small',`${t(statuses[entry.status]||entry.status)} · ${stamp(entry.started)}${entry.id===work.current_run_id?phrase(' · 当前展示',' · Shown above'):''}`),element('p',entry.note||phrase('未登记开始说明','No start note recorded')));parallel.append(line);}
+    card.append(parallel);
+  }
+  const bottom=element('div','','task-card-footer');bottom.append(element('span',`${phrase('进展记录','Progress recorded')} ${stamp(work.update?.created??work.latest?.created??null)}`));card.append(bottom);
   if(run?.stale)card.append(element('small',staleLabel(run),'freshness-warning'));
   const summary=outputSummary(state,task.id),outputs=element('div','','task-outputs');
-  outputs.append(element('strong',outputCountText(summary),'output-count'),element('span',outputMainText(summary),'output-main'));
+  outputs.append(element('strong',outputCountText(summary),'output-count'),...(summary.main?[element('span',outputMainText(summary),'output-main')]:[]));
   outputs.title=summary.main?.filename||'';card.append(outputs);
   const actions=element('div','','task-card-actions');
-  const details=element('button',phrase('查看详情','View details'),'filter-chip');details.type='button';details.setAttribute('aria-label',phrase('查看活动详情：','View task details: ')+task.name);details.addEventListener('click',event=>{event.stopPropagation();selectTask(task);});actions.append(details);
-  if(summary.count){const files=element('button',phrase('查看文件','View files'),'filter-chip');files.type='button';files.setAttribute('aria-label',phrase('查看成果文件：','View output files: ')+task.name);files.addEventListener('click',event=>{event.stopPropagation();openTaskFiles(task);});actions.append(files);}
+  const details=element('button',phrase('查看详情','View details'),'filter-chip');details.type='button';details.dataset.focusKey='task-details:'+task.id;details.setAttribute('aria-label',phrase('查看活动详情：','View task details: ')+task.name);details.addEventListener('click',event=>{event.stopPropagation();selectTask(task);});actions.append(details);
+  if(summary.count){const files=element('button',phrase('查看文件','View files'),'filter-chip');files.type='button';files.dataset.focusKey='task-files:'+task.id;files.setAttribute('aria-label',phrase('查看成果文件：','View output files: ')+task.name);files.addEventListener('click',event=>{event.stopPropagation();openTaskFiles(task);});actions.append(files);}
   card.append(actions);card.addEventListener('click',()=>selectTask(task));return card;
 }
 function renderRules(data={}){
@@ -255,7 +306,7 @@ function renderRules(data={}){
     head.append(element('h3',skillText(item,'name')));
     if(safeSkillURL(item.url)){const link=element('a',en?'Manage ↗':'管理 ↗','binding-link');link.href=item.url;link.target='_blank';link.rel='noopener noreferrer';head.append(link);}
     row.append(head,element('p',skillText(item,'purpose')),element('p',(en?'When: ':'使用场景：')+skillText(item,'when_used'),'skill-caption'));
-    const details=element('details','','registry-details');details.open=expandedSkills.has(item.id);details.append(element('summary',en?'Details':'详情'));
+    const details=element('details','','registry-details');details.dataset.disclosureKey='skill:'+item.id;details.open=expandedSkills.has(item.id);details.append(element('summary',en?'Details':'详情'));
     details.addEventListener('toggle',()=>{if(details.open)expandedSkills.add(item.id);else expandedSkills.delete(item.id);});
     details.append(element('p',(en?'Manual observation · ':'人工观察 · ')+(statuses[item.status]||statuses.unknown)+' · '+stamp(item.observed_at)+' · '+(versions[item.version_status]||versions.unverified),'skill-caption'));
     if(skillText(item,'version_note'))details.append(element('p',skillText(item,'version_note'),'skill-caption'));
@@ -273,7 +324,7 @@ function renderRules(data={}){
   }
   area.append(element('h2',en?'Project guidelines':'项目规范'));
   for(const group of data.groups||[]){
-    const details=element('details','','rule-group'),summary=element('summary',group.title?.[locale]||'');details.append(summary);
+    const details=disclosure(element('details','','rule-group'),expandedRules,'rule:'+group.id),summary=element('summary',group.title?.[locale]||'');details.append(summary);
     for(const item of group.items||[]){details.append(element('h3',(labels[item.level]||labels.planned)+' · '+(item.title?.[locale]||'')),element('p',item.body?.[locale]||''));}area.append(details);
   }
   area.append(element('p',en?'Source: packaged project_rules.json · read-only':'统一来源：项目 project_rules.json · 只读展示','empty-caption'));
@@ -300,14 +351,18 @@ function agentAvatar(agent) {
   avatar.append(element('span','••','agent-eyes'),element('span','⌣','agent-mouth'));
   return avatar;
 }
-function taskOwner(taskId,state) {
-  const assignment=(state.agent_assignments||[]).find(item=>item.task_id===taskId);
-  return assignment?(state.agents||[]).find(agent=>agent.id===assignment.agent_id):null;
-}
+function taskOwner(taskId,state) { return PanelAgents.taskLead(state,taskId).agent; }
 function ownerBadge(taskId,state) {
-  const owner=taskOwner(taskId,state),row=element('div','','owner-badge');
-  if(owner){const states={running:['工作中','Working'],idle:['空闲','Idle'],blocked:['受阻','Blocked'],unavailable:['不可用','Unavailable'],unknown:['未知','Unknown']};const observed=(states[owner.observed_at==null?'unknown':owner.status]||states.unknown)[language==='en'?1:0];row.append(agentAvatar(owner),element('span',`${t('负责人')} · ${PanelAgents.text(owner,'name',language)} · ${phrase('最近观察','Last observed')}: ${observed}`));}
-  else row.append(element('span',`${t('负责人')} · ${t('未分配')}`));
+  const lead=PanelAgents.taskLead(state,taskId),owner=lead.agent,row=element('div','','owner-badge');row.dataset.taskId=taskId;
+  if(owner){
+    const observation=PanelAgents.observation(owner,state);
+    const states={running:['工作中','Working'],idle:['空闲','Idle'],blocked:['受阻','Blocked'],unavailable:['不可用','Unavailable'],unknown:['未知','Unknown']};
+    const observed=(states[observation.status]||states.unknown)[language==='en'?1:0];
+    const active=lead.active.some(agent=>agent.id===owner.id);
+    const caption=element('span',`${active?phrase('当前参与者','Active participant'):t('负责人')} · ${PanelAgents.text(owner,'name',language)}${lead.active.length>1?' +'+(lead.active.length-1):''}`);
+    row.append(agentAvatar(owner),caption,element('small',`${phrase('人工观察','Manual observation')}: ${observed} · ${stamp(owner.observed_at)}${observation.known&&!observation.recent?phrase(' · 较早，当前待确认',' · Older; current state unconfirmed'):''}`));
+    if(active)row.classList.add('observed-running');
+  }else row.append(element('span',`${t('负责人')} · ${t('未分配')}`));
   return row;
 }
 function renderAgents(state) {
@@ -317,10 +372,13 @@ function renderAgents(state) {
   if(!agents.length)$('agent-cards').append(registryCard(t('还没有登记的 Agent'),t('通过本地 CLI 登记负责人，不会扫描或创建执行者。'),'☺'));
   for(const agent of agents){
     const card=element('article','','agent-row');
-    const header=element('div','','agent-heading');header.append(agentAvatar(agent),element('h2',PanelAgents.text(agent,'name',language)),element('span',t(labels[agent.status]||'未知'),'agent-state'));
+    const observation=PanelAgents.observation(agent,state);
+    const header=element('div','','agent-heading');header.append(agentAvatar(agent),element('h2',PanelAgents.text(agent,'name',language)),element('span',phrase('最近观察：','Last observed: ')+t(labels[observation.status]||'未知'),'agent-state'));
+    if(observation.status==='running'&&observation.recent)card.classList.add('observed-running');
     const work=PanelAgents.work(state,agent);
-    const current=work.current.length?work.current.map(row=>`${PanelAgents.type(row.work_type,language)} / ${row.task.name}`).join(' · '):t(agent.status==='idle'?'无当前任务':'当前任务未确认');
+    const current=observation.recent&&work.current.length?work.current.map(row=>`${PanelAgents.type(row.work_type,language)} / ${row.task.name}`).join(' · '):t(agent.status==='idle'?'无当前任务':'当前任务未确认');
     const currentLabel=element('span',current,'agent-current');currentLabel.title=current;header.append(currentLabel);card.append(header);
+    card.append(element('small',`${phrase('人工观察','Manual observation')} · ${stamp(agent.observed_at)}${observation.known&&!observation.recent?phrase(' · 较早，当前待确认',' · Older; current state unconfirmed'):''}`,'agent-observed'));
     const links=element('div','','agent-task-links');
     for(const [group,title] of [['unfinished','未完'],['recent','最近']]){
       for(const row of work[group].slice(0,1)){const task=row.task;const button=element('button',`${PanelAgents.lifecycle(row.status,language)} · ${task.name} ›`,'agent-task-link');button.type='button';button.title=task.name;button.addEventListener('click',()=>selectTask(task));links.append(button);}
@@ -328,7 +386,7 @@ function renderAgents(state) {
     const total=work.unfinished.length+work.recent.length,shown=Number(Boolean(work.unfinished.length))+Number(Boolean(work.recent.length));
     if(total>shown)links.append(element('small',`+${total-shown}`));
     if(!total)links.append(element('small',t('暂无可见关联活动')));card.append(links);
-    const details=element('details','','agent-details');details.open=expandedAgents.has(agent.id);
+    const details=element('details','','agent-details');details.dataset.disclosureKey='agent:'+agent.id;details.open=expandedAgents.has(agent.id);
     const summary=element('summary',t('详情'));details.append(summary);
     details.addEventListener('toggle',()=>{if(details.open)expandedAgents.add(agent.id);else expandedAgents.delete(agent.id);});
     details.append(element('p',PanelAgents.text(agent,'name',language)),element('p',`${t('面板标识')} · ${agent.id}`),element('p',`${t('最后确认时间')} · ${agent.observed_at==null?t('尚未确认'):stamp(agent.observed_at)}`),element('p',current));
@@ -389,13 +447,15 @@ function renderDoctor(report={}){
   const checks=report.checks||[],passed=checks.filter(row=>row.status==='ok').length;
   area.append(element('p',checks.length?phrase(`本机检查：${passed}/${checks.length} 通过 · 仅探测权限`,`Local checks: ${passed}/${checks.length} OK · permission probes only`):phrase('尚未运行检查','No diagnostics available')));
   for(const component of ['account_task_skill','account_personal_skill','scheduler_configuration','scheduler_execution'])area.append(element('p',`${label(component)} · ${status(report.observations?.[component]?.status)}`));
-  const details=element('details','','doctor-details');details.append(element('summary',phrase('本机检查详情','Local check details')));
+  const details=disclosure(element('details','','doctor-details'),expandedDiagnostics,'diagnostics');details.append(element('summary',phrase('本机检查详情','Local check details')));
   for(const row of checks)details.append(element('p',`${label(row.id)} · ${status(row.status)}`));
   for(const [component,row] of Object.entries(report.observations||{}))if(row.evidence)details.append(element('p',`${label(component)} · ${stamp(row.observed_at)} · ${row.evidence}`));
   area.append(details,element('small',phrase('不扫描账户、不安装、不创建定时器；源码可用不等于账户已配置','No account scan, installation or scheduling; source availability does not verify account setup')));
 }
 
 function render(state) {
+  state={...state,current_runs:PanelWorkspace.currentRuns(state)};
+  const view=captureView($('task-filter').value);
   const focusedFilter=(document.activeElement?.id?.startsWith('filter-')||document.activeElement?.id?.startsWith('attention-'))?document.activeElement.id:null;
   lastState = state;
   $('recovery-notice').hidden=!state.recovery;
@@ -424,13 +484,16 @@ function render(state) {
   $('os').textContent = m.os;
   $('system-detail').textContent = `${m.architecture} · Python ${m.python}`;
   const selected = $('task-filter').value;
-  $('task-filter').replaceChildren(element('option',t('所有活动 / 进度记录'))); $('task-filter').firstChild.value = '';
-  for (const task of state.tasks) { const option = element('option',task.name); option.value = task.id; $('task-filter').append(option); }
-  $('task-filter').value = selected;
+  const taskChoices=JSON.stringify([language,...state.tasks.map(task=>[task.id,task.name])]);
+  if($('task-filter').dataset.choices!==taskChoices&&document.activeElement!==$('task-filter')){
+    $('task-filter').replaceChildren(element('option',t('所有活动 / 进度记录')));$('task-filter').firstChild.value='';
+    for(const task of state.tasks){const option=element('option',task.name);option.value=task.id;$('task-filter').append(option);}
+    $('task-filter').value=selected;$('task-filter').dataset.choices=taskChoices;
+  }
   const chosen=state.tasks.find(task=>task.id===selected);
   $('conversation-list').hidden=Boolean(chosen);$('conversation-detail').hidden=!chosen;
   $('selected-task-title').textContent=chosen?chosen.name:'';
-  const chosenRun=chosen?PanelWorkspace.rows([chosen],state.latest_runs||state.runs)[0].run:null;
+  const chosenRun=chosen?PanelWorkspace.rows([chosen],state.current_runs||state.latest_runs||state.runs)[0].run:null;
   renderAdvice(chosen,chosenRun);
   renderCloseout(chosenRun,state);
   renderAttention(state);
@@ -441,12 +504,15 @@ function render(state) {
   $('task-lifecycle-meta').replaceChildren();
   $('task-agent').replaceChildren();if(chosen){
     $('task-agent').append(ownerBadge(chosen.id,state));
+    const progress=PanelWorkspace.workProgress(state,chosen.id,chosenRun);
+    if(progress.open_runs.length>1)$('task-agent').append(element('small',phrase(`并行未完成 · ${progress.open_runs.length}`,`Unfinished runs · ${progress.open_runs.length}`),'empty-caption'));
+    for(const entry of progress.open_runs)if(entry.id!==progress.current_run_id)$('task-lifecycle-meta').append(element('p',`${phrase('其他未完成运行','Other unfinished run')}: ${t(statuses[entry.status]||entry.status)} · ${entry.note||phrase('未登记开始说明','No start note recorded')}`,'lifecycle-detail'));
     for(const [field,zh,en] of [['lifecycle_reason','状态原因','Reason'],['next_step','下一步','Next step'],['lifecycle_evidence','状态依据','Evidence']]){
       if(chosenRun?.[field])$('task-lifecycle-meta').append(element('p',`${phrase(zh,en)}: ${chosenRun[field]}`,'lifecycle-detail'));
     }
     if(chosenRun?.lifecycle_reason)$('task-lifecycle-meta').append(element('small',phrase('仅登记任务状态，不会控制执行者','Recorded lifecycle only; does not control the executor')));
     const owner=taskOwner(chosen.id,state);
-    if(owner){const current=PanelAgents.work(state,owner).current.find(row=>row.task.id===chosen.id);$('task-agent').append(element('p',current?`${t('当前工作（按最近观察）')} · ${PanelAgents.type(current.work_type,language)}`:t(owner.status==='idle'?'待命 · 无当前任务':'未确认为当前工作'),'agent-current'));}
+    if(owner){const current=PanelAgents.observation(owner,state).recent&&PanelAgents.work(state,owner).current.find(row=>row.task.id===chosen.id);$('task-agent').append(element('p',current?`${t('当前工作（按最近观察）')} · ${PanelAgents.type(current.work_type,language)}`:t(owner.status==='idle'?'待命 · 无当前任务':'未确认为当前工作'),'agent-current'));}
   }
   $('session-binding').replaceChildren();
   const binding=(state.bindings||[]).find(item=>item.task_id===selected);
@@ -461,27 +527,33 @@ function render(state) {
   $('task-count').textContent = state.tasks.length;
   $('task-empty').hidden = state.tasks.length > 0;
   $('task-list').replaceChildren();
-  for (const {task,run} of PanelWorkspace.rows(state.tasks,state.latest_runs||state.runs,workspaceFilter,workspaceQuery)) {
+  for (const {task,run} of PanelWorkspace.rows(state.tasks,state.current_runs||state.latest_runs||state.runs,workspaceFilter,workspaceQuery)) {
     $('task-list').append(taskCard(task,run,state));
   }
   $('project-activity').replaceChildren();
-  const activity = state.activity.filter(e => !selected || e.task_id === selected);
+  const activity = PanelWorkspace.timeline(state,selected).filter(row=>row.kind==='activity');
   const stageNames = {planned:'规划',implementation:'实现',testing:'测试',review:'审查',delivered:'交付'};
   const stageState = {unknown:'历史状态未保留',planned:'计划中',in_progress:'进行中',verified:'已验证'};
   $('pipeline').replaceChildren();
   for (const [stage, title] of Object.entries(stageNames)) { const recent = activity.find(e=>e.stage===stage); $('pipeline').append(element('span', `${t(title)} · ${recent ? t(stageState[recent.state]) : t('未记录')}`, recent ? recent.state : '')); }
   $('progress-summary').textContent = activity.length ? `${t('最近更新')} ${stamp(activity[0].created)}` : t('尚无此任务的阶段记录');
-  if (!activity.length) $('project-activity').append(element('p',t('还没有项目沟通摘要'),'event-empty'));
-  for (const event of activity) { const item = element('div','','event'); const role = {user:'你',assistant:'助手',system:'系统',unknown:'来源未保留'}[event.role] || event.role; item.append(element('small',`${stamp(event.created)} · ${event.project} · ${t(role)} · ${t(event.stage==='recovered_summary'?'恢复摘要':event.stage==='assignment'?'负责人变更':event.stage==='work_type'?'任务类型更新':event.stage==='state_changed'?phrase('状态变更','State changed'):event.stage==='closeout'?phrase('交付与验证','Delivery & verification'):stageNames[event.stage] || event.stage)} · ${t(stageState[event.state] || event.state)}`),document.createTextNode(event.message)); $('project-activity').append(item); }
+  const timeline=PanelWorkspace.timeline(state,selected);
+  if(!timeline.length)$('project-activity').append(element('p',t('还没有项目沟通摘要'),'event-empty'));
+  for(const event of timeline){
+    const item=element('div','','event');item.dataset.timelineKey=event.key;
+    const role={user:'你',assistant:'助手',system:'系统',unknown:'来源未保留'}[event.role]||event.role;
+    const stage=event.kind==='note'?phrase('开始说明','Start note'):event.kind==='event'?phrase('运行事件','Run event'):t(event.stage==='progress'?phrase('工作进展','Work progress'):event.stage==='recovered_summary'?'恢复摘要':event.stage==='assignment'?'负责人变更':event.stage==='work_type'?'任务类型更新':event.stage==='state_changed'?phrase('状态变更','State changed'):event.stage==='closeout'?phrase('交付与验证','Delivery & verification'):stageNames[event.stage]||event.stage);
+    const metadata=[stamp(event.created),stage,event.state?t(stageState[event.state]||event.state):'',event.kind==='activity'?t(role):''].filter(Boolean).join(' · ');
+    item.append(element('small',metadata),document.createTextNode(event.message));$('project-activity').append(item);
+  }
   $('events').replaceChildren();
-  const visibleRuns=new Set(state.runs.filter(run=>!selected||run.task_id===selected).map(run=>run.id));
-  const events=state.events.filter(event=>!selected||visibleRuns.has(event.run_id));
+  const events=PanelWorkspace.timeline({...state,activity:[]},selected).filter(event=>event.kind==='event');
   if (!events.length) $('events').append(element('p',t('还没有运行记录'),'event-empty'));
   for (const event of events) { const item = element('div','','event'); item.append(element('small',`${stamp(event.created)} · ${event.run_id}`),document.createTextNode(event.message)); $('events').append(item); }
   $('active-work').replaceChildren();
   $('workspace-filter').value=workspaceFilter;
   renderStatusFilters(state);
-  const workspace=PanelWorkspace.rows(state.tasks,state.latest_runs||state.runs,workspaceFilter);
+  const workspace=PanelWorkspace.rows(state.tasks,state.current_runs||state.latest_runs||state.runs,workspaceFilter);
   if(!workspace.length)$('active-work').append(element('p',t('没有符合此状态的任务'),'empty-caption'));
   for(const {task,run} of workspace)$('active-work').append(taskCard(task,run,state));
   renderSchedules(state.schedules||[]);
@@ -490,18 +562,28 @@ function render(state) {
   if(!software.length)$('software-cards').append(registryCard(t('还没有登记的软件'),t('只会检查明确登记的白名单软件，不会扫描系统。')));
   for(const item of software){
     const card=registryCard(item.name,item.version||t('未知'));card.append(element('span',t(item.available?'已检测到':'未检测到'),'status '+(item.available?'succeeded':'')));
-    const details=element('details','','registry-details');details.open=expandedSoftware.has(item.id);details.append(element('summary',phrase('详情','Details')));
+    const details=element('details','','registry-details');details.dataset.disclosureKey='software:'+item.id;details.open=expandedSoftware.has(item.id);details.append(element('summary',phrase('详情','Details')));
     details.addEventListener('toggle',()=>{if(details.open)expandedSoftware.add(item.id);else expandedSoftware.delete(item.id);});
     details.append(element('p',`${phrase('简介','Description')} · ${item.description}`),element('p',`${phrase('类型','Kind')} · ${item.kind}`),element('p',`${t('版本')} · ${item.version||t('未知')}`),element('small',`${t('检测时间')} ${stamp(item.verified_at)}`));
     const controls=element('div','','software-controls');for(const label of ['启动','停止']){const button=element('button',t(label));button.disabled=true;button.title=t('Web 只读；请使用本机快捷方式或管理入口');controls.append(button);}details.append(controls,element('p',t('Web 只读；请使用本机快捷方式或管理入口'),'empty-caption'));card.append(details);$('software-cards').append(card);
   }
   if(focusedFilter)$(focusedFilter)?.focus({preventScroll:true});
+  restoreView(view,selected);
+}
+function headerRegion(value) {
+  if(!value||value.scope!=='panel_backend_exit'||value.provider!=='ipwho.is'||!Number.isFinite(value.checked_at)||!value.country)return phrase('后台出口：未核验','Backend exit: unverified');
+  const parts=[...new Set([value.country,value.region,value.city].filter(Boolean))];
+  return phrase('后台出口（约）：','Backend exit (approx.): ')+parts.join(', ')+(Date.now()/1000-value.checked_at>86400?phrase(' · 旧观察',' · old observation'):'');
+}
+function headerStamp(value) {
+  if(value==null)return '—';
+  return new Intl.DateTimeFormat(language==='zh'?'zh-CN':'en-GB',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).format(new Date(value*1000));
 }
 async function refresh() {
   if (busy) return;
   busy = true; $('refresh').disabled = true;
-  try { const response = await fetch('/api/state',{cache:'no-store',signal:AbortSignal.timeout(4000)}); if(!response.ok) throw new Error('offline'); render(await response.json()); $('connection').textContent = phrase('本地数据','Local data')+' · '+phrase('每 5 秒','Every 5s')+' · '+stamp(lastState?.metrics?.sampled_at); $('indicator').classList.remove('offline'); }
-  catch (_) { $('connection').textContent = t('连接中断 · 显示上次数据'); $('indicator').classList.add('offline'); }
+  try { const response = await fetch('/api/state',{cache:'no-store',signal:AbortSignal.timeout(4000)}); if(!response.ok) throw new Error('offline'); render(await response.json()); $('connection').textContent = phrase('本地数据','Local data')+' · '+phrase('每 5 秒','Every 5s')+' · '+headerStamp(lastState?.metrics?.sampled_at)+' · '+headerRegion(lastState?.exit_region); $('connection').title=lastState?.exit_region?'ipwho.is · '+stamp(lastState.exit_region.checked_at):''; $('indicator').classList.remove('offline'); }
+  catch (_) { if(lastState){const view=captureView($('task-filter').value);renderAgents(lastState);for(const id of ['task-list','active-work','task-agent'])for(const badge of $(id).querySelectorAll?.('.owner-badge')||[])badge.replaceWith(ownerBadge(badge.dataset.taskId,lastState));restoreView(view,$('task-filter').value);} $('connection').textContent = t('连接中断 · 显示上次数据'); $('indicator').classList.add('offline'); }
   finally {busy = false; $('refresh').disabled = false;}
 }
 $('workspace-search').addEventListener('input',()=>{workspaceQuery=$('workspace-search').value;if(lastState)render(lastState);});
@@ -509,7 +591,7 @@ $('workspace-filter').addEventListener('change',()=>{workspaceFilter=$('workspac
 window.addEventListener('hashchange',showPage);
 $('back-conversations').addEventListener('click',()=>{adviceTaskId=null;$('task-filter').value='';if(lastState)render(lastState);});
 showPage();
-$('toggle-events').addEventListener('click',()=>{ const expanded=$('toggle-events').getAttribute('aria-expanded')==='true'; $('events').hidden=expanded; $('toggle-events').setAttribute('aria-expanded',String(!expanded)); $('toggle-events').textContent=t(expanded?'展开运行记录':'收起运行记录'); });
+$('toggle-events').addEventListener('click',()=>{ const expanded=$('toggle-events').getAttribute('aria-expanded')==='true'; $('events').hidden=expanded; $('toggle-events').setAttribute('aria-expanded',String(!expanded)); $('toggle-events').textContent=phrase(expanded?'展开原始运行记录':'收起原始运行记录',expanded?'Show raw run records':'Hide raw run records'); });
 $('language').addEventListener('change',()=>{
   preference=$('language').value;
   try { localStorage.setItem('dots-panel-language',preference); settingsError=''; } catch (_) { settingsError='save'; }

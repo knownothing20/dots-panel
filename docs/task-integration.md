@@ -165,3 +165,21 @@ Consistent private DATA backups preserve both platform associations and result
 references. Restoring them only restores observations, never creates or clones
 a real platform task. Recovery must recheck current official state before claiming
 it is enabled or its next execution is known.
+
+## Meaningful work progress
+
+`progress-update` records the current step, a concrete result, and the next step on an existing unfinished run, without changing lifecycle or controlling the executor:
+
+```sh
+sh scripts/start.sh --data-dir "$DATA" progress-update "$RUN_ID" \
+  --current-step "Render the approved sequence" \
+  --result "Scene validation passed" \
+  --next-step "Inspect the export" \
+  --evidence "Observed renderer output" \
+  --completed 240 --total 576 --unit frames \
+  --source-event-id "render-frame-240"
+```
+
+Counts are optional, measured stage values, not overall task percentages. Both values and a unit are required together. Source IDs deduplicate retries and reject conflicting content; repeated identical content does not create a milestone. Records are retained in the private DATA database; snapshots read a bounded recent set. Existing databases remain readable without this optional table.
+
+The view prioritizes unfinished runs: a freshly observed participant explicitly assigned to a running run leads; otherwise the newest unfinished run leads. Only when none remain unfinished does it show the newest terminal run. Other unfinished runs remain visible in the parallel-run summary. Historical latest-run records are retained separately. The view uses the selected run's meaningful progress. A newer unscoped ordinary milestone is explicitly labeled as task-level and supersedes an older structured count; a milestone attributed to another run does not replace the selected run; a new run does not inherit old counts, and non-running runs do not show active measured progress. Fresh observed running participants may lead the display while original ownership stays intact. Stale observations are explicitly unconfirmed. Heartbeat timestamps and elapsed time do not become meaningful-work updates. The interface is still read-only and does not automatically collect tool output or guarantee Skill invocation.

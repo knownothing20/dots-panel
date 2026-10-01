@@ -90,3 +90,13 @@ panel status
 ```
 
 Use an existing profile for the same verified executor. `agent-run-assign` is idempotent per run/profile and permits parallel participants without replacing the activity's primary owner. It does not start a worker. Record unknown for unconfirmed/pending initialization. A finished worker turn becomes idle only after observation; waiting or incomplete goal runs remain open. When the installed CLI lacks this operation, record the tracking gap and upgrade only with authorization; never silently overwrite another assignment.
+
+## Current step without a lifecycle transition
+
+```sh
+panel progress-update "$RUN_ID" --current-step "$STEP" --result "$RESULT" --next-step "$NEXT" --evidence "$EVIDENCE" --source-event-id "$STABLE_EVENT_ID"
+# Only with an actual measured count:
+panel progress-update "$RUN_ID" --current-step "$STEP" --result "$RESULT" --next-step "$NEXT" --evidence "$EVIDENCE" --completed 240 --total 576 --unit frames --source-event-id "$STABLE_EVENT_ID"
+```
+
+Use the installed help as authoritative. This appends an explicit user-facing milestone without changing lifecycle, primary owner or executor control. Retries with the same ID/content are deduplicated; a reused ID with different content is rejected. Completed and total must be supplied together with a unit and satisfy 0 <= completed <= total. Terminal runs cannot accept new progress. These counts are observations, not computed estimates of overall project completion. Read-only UIs may show fresh running participants and recent meaningful steps, but do not synthesize progress from heartbeat or elapsed time.

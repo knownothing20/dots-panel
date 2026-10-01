@@ -35,7 +35,7 @@ class AttentionTests(unittest.TestCase):
             self.assertEqual(item['run']['lifecycle_reason'], 'Actual reason '+item['task']['id'])
             self.assertEqual(item['run']['next_step'], 'Next step '+item['task']['id'])
 
-    def test_latest_only_and_terminal_clears_queue(self):
+    def test_completed_side_run_does_not_clear_older_unfinished_queue(self):
         self.task('one', 'waiting_user')
         newest = self.store.start('one')
         self.assertEqual(attention_items(self.store.snapshot())['action_required'], [])
@@ -43,7 +43,9 @@ class AttentionTests(unittest.TestCase):
         self.assertEqual(len(attention_items(self.store.snapshot())['action_required']), 1)
         prepare_success(self.store, newest)
         self.store.transition(newest, 'succeeded', 'Accepted', 'Review evidence')
-        self.assertEqual(attention_items(self.store.snapshot())['action_required'], [])
+        remaining = attention_items(self.store.snapshot())['action_required']
+        self.assertEqual(len(remaining), 1)
+        self.assertEqual(remaining[0]['run']['status'], 'waiting_user')
 
     def test_duplicates_and_equal_timestamps_are_stable(self):
         task = {'id':'one','name':'One'}

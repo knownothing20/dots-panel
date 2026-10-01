@@ -66,7 +66,7 @@ class PanelTests(unittest.TestCase):
     def test_stale_is_not_failure(self):
         self.store.register('sample', 'Task', 'Example')
         run = self.store.start('sample')
-        with self.store.connect() as db: db.execute('UPDATE runs SET updated=0 WHERE id=?', (run,))
+        with self.store.connect() as db: db.execute('UPDATE runs SET started=0,updated=0 WHERE id=?', (run,))
         row = self.store.snapshot()['runs'][0]
         self.assertTrue(row['stale'])
         self.assertEqual(row['status'], 'running')
@@ -84,6 +84,7 @@ class PanelTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             insecure = Path(temp) / 'insecure'
             insecure.mkdir(mode=0o755)
+            insecure.chmod(0o755)  # Isolated fixture: make it insecure even under a restrictive desktop umask.
             with self.assertRaises(ValueError): Store(insecure)
             link = Path(temp) / 'linked'
             link.symlink_to(self.store.directory)
@@ -122,7 +123,7 @@ class PanelTests(unittest.TestCase):
     def test_manual_updates_are_not_heartbeats(self):
         self.store.register('manual', 'Task', 'Example')
         run = self.store.start('manual')
-        with self.store.connect() as db: db.execute('UPDATE runs SET updated=0 WHERE id=?', (run,))
+        with self.store.connect() as db: db.execute('UPDATE runs SET started=0,updated=0 WHERE id=?', (run,))
         old = self.store.snapshot()['runs'][0]
         self.assertTrue(old['stale'])
         self.assertEqual(old['tracking_mode'], 'manual')

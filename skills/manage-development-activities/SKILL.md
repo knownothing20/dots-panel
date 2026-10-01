@@ -75,3 +75,11 @@ Read [references/tool-contract.md](references/tool-contract.md) before binding o
 ## Close out or wait honestly
 
 Use [references/closeout.md](references/closeout.md) for the shared completion checklist, waiting states and optional hourly monitoring setup. Skill availability, loading for a turn, actual delegation, panel registration and automatic scheduling are separate checks. Do not promise guaranteed triggering or global enforcement. This bundled source is the authoritative project workflow; importing it into an account is a separate, explicit installation step. Do not claim account installation, loading or monitoring merely because these files exist.
+
+## Meaningful updates while work is ongoing
+
+Do not wait until a long task finishes to record or communicate its progress. Record a short, user-facing paragraph when a concrete step starts, produces a result, or changes the next step. Keep all these milestones in the same goal activity and current run; do not create a task for each tiny step. Distinguish the latest work result from executor heartbeat or a refreshed timestamp.
+
+When the installed CLI supports `progress-update`, use it for the current step, result, next step and evidence without forcing a lifecycle transition from running to running. An unchanged milestone is not a new event. Use a stable source event ID for retry safety. Only provide completed/total/unit when a real tool or process measured those values. For long renders with observable counts, check at a bounded 30–60 second cadence and record only changed counts or a meaningful result; do not fabricate percentages or continuously append heartbeat text.
+
+Refresh actual participant observations at meaningful milestones. Keep primary ownership intact while showing freshly observed running participants for the current work. An old running observation is not proof that execution continues. User-facing paragraphs may describe outcomes and next steps, never private reasoning, raw tool transcripts or internal worker identities. Source availability and account Skill installation remain separate; this instruction does not guarantee automatic invocation or schedule a monitor.

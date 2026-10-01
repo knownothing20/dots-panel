@@ -105,7 +105,7 @@ def agent_work(snapshot, agent):
     """Ownership and lifecycle do not independently prove current work."""
     primary = [a for a in snapshot.get("agent_assignments", []) if a.get("agent_id") == agent["id"]]
     scoped = [a for a in snapshot.get("agent_run_assignments", []) if a.get("agent_id") == agent["id"]]
-    runs = snapshot.get("runs", [])
+    runs = list({r["id"]:r for r in [*snapshot.get("runs", []), *snapshot.get("open_runs", [])]}.values())
     result = {"current": [], "unfinished": [], "recent": []}
     for task in snapshot.get("tasks", []):
         links = [(r, a) for a in scoped for r in runs if a["run_id"] == r["id"] and r["task_id"] == task["id"]]
@@ -141,9 +141,9 @@ def verification_label(value, language="zh"):
     return {"passed": ("检查通过", "Checks passed"), "failed": ("检查失败", "Checks failed"), "untested": ("未测试", "Untested")}.get(value, ("未登记验证", "Verification not recorded"))[language == "en"]
 
 def attention_items(snapshot):
-    """Derived read-only queue, one latest run per visible task; no inferred needs."""
+    """Derived read-only queue, one selected unfinished run per visible task; no inferred needs."""
     latest = {}
-    for run in snapshot.get("latest_runs", snapshot.get("runs", [])):
+    for run in snapshot.get("current_runs", snapshot.get("latest_runs", snapshot.get("runs", []))):
         old = latest.get(run["task_id"])
         if old is None or (run.get("started", 0), run.get("id", "")) > (old.get("started", 0), old.get("id", "")):
             latest[run["task_id"]] = run
@@ -441,6 +441,10 @@ class Store(RecoveryStoreMixin):
                 # Legacy finish remains supported but must not display an obsolete
                 # waiting reason as evidence for completion.
                 db.execute("UPDATE runs SET lifecycle_reason='',next_step='',lifecycle_evidence='' WHERE id=?", (key,))
+
+    def progress_update(self, run_id, current_step, result="", next_step="", evidence="", completed=None, total=None, unit="", source_event_id=None):
+        from .progress import record_progress
+        return record_progress(self, run_id, current_step, result, next_step, evidence, completed, total, unit, source_event_id)
 
     def transition(self, key, status, reason, evidence, next_step="", from_status=None):
         """Record a justified lifecycle change; never control the actual executor."""
@@ -947,6 +951,7 @@ class Store(RecoveryStoreMixin):
             runs = [dict(r) for r in db.execute("SELECT * FROM runs ORDER BY started DESC,id DESC LIMIT 100")]
             # Keep the latest run for every visible task even outside the history window.
             latest_runs = [dict(r) for r in db.execute("SELECT runs.* FROM tasks JOIN runs ON runs.id=(SELECT r.id FROM runs r WHERE r.task_id=tasks.id ORDER BY r.started DESC,r.id DESC LIMIT 1) WHERE tasks.id IN (SELECT id FROM tasks ORDER BY created DESC LIMIT 500) ORDER BY tasks.created DESC,tasks.id")]
+            open_runs = [dict(r) for r in db.execute("SELECT * FROM runs WHERE status IN ('running','waiting_user','waiting_external','paused','awaiting_review') AND task_id IN (SELECT id FROM tasks ORDER BY created DESC LIMIT 500) ORDER BY started DESC,id DESC")]
             events = [dict(r) for r in db.execute("SELECT * FROM events ORDER BY id DESC LIMIT 100")]
             activity = [dict(r) for r in db.execute("SELECT * FROM activity ORDER BY created DESC, id DESC LIMIT 100")]
             bindings = [dict(r) for r in db.execute("SELECT * FROM task_bindings ORDER BY synced_at DESC LIMIT 500")]
@@ -954,6 +959,7 @@ class Store(RecoveryStoreMixin):
             attach_results(db, schedules)
             attach_observations(db, schedules)
             tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            progress_updates = [dict(r) for r in db.execute("SELECT * FROM progress_updates ORDER BY created DESC,id DESC LIMIT 500")] if "progress_updates" in tables else []
             rules_row = db.execute("SELECT skill_url FROM rules_config WHERE id=1").fetchone() if "rules_config" in tables else None
             rules = project_rules()
             rules["skill_url"] = rules_row["skill_url"] if rules_row else None
@@ -990,16 +996,21 @@ class Store(RecoveryStoreMixin):
             item["running"] = None  # Availability is not evidence that a program is running.
 
         task_modes = {task["id"]: task.get("tracking_mode", "manual") for task in tasks}
-        for run in runs + latest_runs:
+        for run in runs + latest_runs + open_runs:
             run.setdefault("closeout_required", 0)
             run["closeout"] = next((record for record in closeouts if record["run_id"] == run["id"]), None)
             for field in ("lifecycle_reason", "next_step", "lifecycle_evidence"):
                 run.setdefault(field, "")
             run["tracking_mode"] = task_modes.get(run["task_id"], "manual")
-            latest_summary = max((item["created"] for item in activity if item.get("task_id") == run["task_id"] and item.get("stage") not in ("assignment", "work_type")), default=run["updated"])
-            run["progress_updated"] = max(run["updated"], latest_summary) if run["tracking_mode"] == "manual" else run["updated"]
+            latest_summary = max((item["created"] for item in activity if item.get("task_id") == run["task_id"] and item.get("stage") not in ("assignment", "work_type", "heartbeat") and item["created"] >= run["started"] and (run.get("finished") is None or item["created"] <= run["finished"])), default=run["started"])
+            latest_event = max((item["created"] for item in events if item["run_id"] == run["id"]), default=run["started"])
+            run["progress_updated"] = max(run["started"], latest_summary, latest_event) if run["tracking_mode"] == "manual" else run["updated"]
             run["stale"] = run["status"] in OPEN_STATUSES and now - run["progress_updated"] > stale_seconds
-        return {"output_summaries": outputs, "recovery": recovery_notice(self.directory), "rules": rules, "about": {"installed_version": VERSION, "install_notes": INSTALL_NOTES, "release": release, "doctor": install_doctor(ROOT, self.directory)}, "artifacts": artifacts, "agents": agents, "agent_assignments": agent_assignments, "agent_run_assignments": agent_run_assignments, "tasks": tasks, "runs": runs, "latest_runs": latest_runs, "closeouts": closeouts, "events": events, "activity": activity, "schedules": schedules, "software": software, "bindings": bindings, "stale_after_seconds": stale_seconds}
+        from .progress import current_run
+        selection = {"runs": runs, "latest_runs": latest_runs, "open_runs": open_runs, "agents": agents, "agent_run_assignments": agent_run_assignments, "stale_after_seconds": stale_seconds}
+        current_runs = [run for task in tasks if (run := current_run(selection, task["id"], now)) is not None]
+        from .exit_region import load as load_exit_region
+        return {"exit_region": load_exit_region(self.directory), "open_runs": open_runs, "current_runs": current_runs, "progress_updates": progress_updates, "output_summaries": outputs, "recovery": recovery_notice(self.directory), "rules": rules, "about": {"installed_version": VERSION, "install_notes": INSTALL_NOTES, "release": release, "doctor": install_doctor(ROOT, self.directory)}, "artifacts": artifacts, "agents": agents, "agent_assignments": agent_assignments, "agent_run_assignments": agent_run_assignments, "tasks": tasks, "runs": runs, "latest_runs": latest_runs, "closeouts": closeouts, "events": events, "activity": activity, "schedules": schedules, "software": software, "bindings": bindings, "stale_after_seconds": stale_seconds}
 
 
 
@@ -1178,6 +1189,16 @@ def main():
     skill_cmd.add_argument("--url")
     skill_cmd.add_argument("--status", choices=SKILL_STATUSES, default="unknown")
     skill_cmd.add_argument("--version-status", choices=SKILL_VERSIONS, default="unverified")
+    progress = subs.add_parser("progress-update", help="Record a meaningful current step or measured progress without changing lifecycle")
+    progress.add_argument("run_id")
+    progress.add_argument("--current-step", required=True)
+    progress.add_argument("--result", default="")
+    progress.add_argument("--next-step", default="")
+    progress.add_argument("--evidence", required=True)
+    progress.add_argument("--completed", type=float)
+    progress.add_argument("--total", type=float)
+    progress.add_argument("--unit", default="")
+    progress.add_argument("--source-event-id")
     transition = subs.add_parser("transition", help="Record lifecycle only; does not pause, resume or cancel an executor")
     transition.add_argument("run_id")
     transition.add_argument("--status", choices=LIFECYCLE_STATUSES, required=True)
@@ -1301,6 +1322,8 @@ def main():
             print(json.dumps(store.artifact_add(args.task_id, args.source, args.title, args.kind, args.slug, args.library_id)))
         elif args.command == "skill-origin":
             print(json.dumps(store.skill_origin(args.id, args.origin, args.publication, args.observed_at, args.repo_url, args.commit_sha)))
+        elif args.command == "progress-update":
+            print(json.dumps(store.progress_update(args.run_id,args.current_step,args.result,args.next_step,args.evidence,args.completed,args.total,args.unit,args.source_event_id),ensure_ascii=False))
         elif args.command == "transition":
             print(json.dumps(store.transition(args.run_id, args.status, args.reason, args.evidence, args.next_step, args.from_status), ensure_ascii=False))
         elif args.command == "artifact-designate":

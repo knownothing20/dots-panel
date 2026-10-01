@@ -2,8 +2,8 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const code=fs.readFileSync(require('node:path').join(__dirname,'../web/app.js'),'utf8');
 const render=code.slice(code.indexOf('function renderRules('),code.indexOf('function renderAbout('));
-function element(tag,text='',className=''){return {tag,text,className,children:[],listeners:{},addEventListener(key,handler){this.listeners[key]=handler;},append(...items){this.children.push(...items);},replaceChildren(){this.children=[];}};}
-const area=element('div');const context={language:'en',element,$:()=>area,stamp:v=>String(v),expandedSkills:new Set()};vm.createContext(context);vm.runInContext(render,context);
+function element(tag,text='',className=''){return {tag,text,className,dataset:{},attrs:{},setAttribute(key,value){this.attrs[key]=value;},children:[],listeners:{},addEventListener(key,handler){this.listeners[key]=handler;},append(...items){this.children.push(...items);},replaceChildren(){this.children=[];}};}
+const area=element('div');const context={language:'en',element,$:()=>area,stamp:v=>String(v),expandedSkills:new Set(),expandedRules:new Set()};vm.createContext(context);vm.runInContext(code.slice(code.indexOf('function disclosure('),code.indexOf('function captureView('))+render,context);
 const skill={id:'example',scope:'user_installed',name:'示例',name_en:'Example',purpose:'用途',purpose_en:'<script>literal</script>',when_used:'使用',when_used_en:'When needed',status:'available',version_status:'unverified',observed_at:123,url:'https://chatgpt.com/skills?skill_id=example'};
 const nodes=()=>{const out=[];function walk(n){out.push(n);n.children.forEach(walk);}walk(area);return out;};
 context.renderRules({skills:[skill],skill_url:skill.url});

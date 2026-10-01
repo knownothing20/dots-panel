@@ -133,8 +133,9 @@ class LifecycleTests(unittest.TestCase):
     def test_staleness_does_not_change_waiting_state(self):
         self.change('waiting_external')
         with self.store.connect() as db:
-            db.execute('UPDATE runs SET updated=0 WHERE id=?', (self.run,))
+            db.execute('UPDATE runs SET started=0,updated=0 WHERE id=?', (self.run,))
             db.execute('UPDATE activity SET created=0')
+            db.execute('UPDATE events SET created=0')
         row = self.row()
         self.assertTrue(row['stale'])
         self.assertEqual(row['status'], 'waiting_external')
