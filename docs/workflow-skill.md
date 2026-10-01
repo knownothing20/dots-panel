@@ -1,5 +1,7 @@
 # 配套工作流 Skill
 
+端到端安装和账户验收步骤见 [Agent 安装与接入 Runbook](agent-setup.md#2-配套-skill源码账户安装会话加载分别验收)。
+
 规范文件位于 `skills/manage-development-activities/`，仅包含通用任务管理流程及三个参考文件。它们不是本机执行器，也不会自动安装到任何账户。
 
 检查文件及 SHA-256：

@@ -7,7 +7,7 @@ import argparse
 from .outputs import TaskFolderOpener, task_output_summary, output_summary_text, output_main_text
 import base64
 from .doctor import doctor_rows
-from .progress import task_progress, current_run
+from .progress import task_progress, current_run, task_meaningful_updated
 from .app import artifact_delivery_label, verification_label, attention_items, attention_draft, artifact_kind_label, VERSION, verified_repository_url, verified_link, skill_origin_label, skill_publication_label
 from contextlib import contextmanager
 import json
@@ -307,7 +307,7 @@ def task_rows(snapshot, now, language="zh"):
         updated = duration(now - run.get("progress_updated", run["updated"]), language) + (" ago" if language == "en" else "前") if run else "—"
         rows.append({"id": task["id"], "run": run, "status": status, "warning": warning,
                      "values": (task["name"], task["project"], label, stage_label(activity["stage"], language) if activity else "—", elapsed, updated)})
-    return rows
+    return sorted(rows, key=lambda row: (row["status"] in {"succeeded", "cancelled"}, -task_meaningful_updated(snapshot, row["id"]), row["id"]))
 
 
 def pipeline_counts(snapshot):

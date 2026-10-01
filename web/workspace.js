@@ -78,15 +78,21 @@ globalThis.PanelWorkspace = {
     const latest=this.progress(activity,taskId)[0];
     return latest?latest.message:(language==='en'?'No work progress recorded':'尚无工作进展摘要');
   },
-  rows(tasks, runs, filter = 'all', query = '') {
+  meaningfulUpdated(state,taskId) {
+    const runs=new Map(['runs','latest_runs','current_runs','open_runs'].flatMap(key=>state[key]||[]).filter(row=>row.task_id===taskId).map(row=>[row.id,row]));
+    const values=[...(state.tasks||[]).filter(row=>row.id===taskId).map(row=>row.created),...[...runs.values()].flatMap(row=>[row.started,row.finished]),...(state.activity||[]).filter(row=>row.task_id===taskId&&!['heartbeat','assignment','work_type'].includes(row.stage)).map(row=>row.created),...(state.progress_updates||[]).filter(row=>runs.has(row.run_id)).map(row=>row.created),...(state.events||[]).filter(row=>runs.has(row.run_id)&&row.kind!=='heartbeat'&&row.stage!=='heartbeat').map(row=>row.created)];
+    return Math.max(0,...values.filter(value=>typeof value==='number'&&Number.isFinite(value)));
+  },
+  rows(tasks, runs, filter = 'all', query = '', state = null) {
     const latest = new Map();
     for (const run of runs) {
       if (!latest.has(run.task_id) || run.started > latest.get(run.task_id).started || (run.started === latest.get(run.task_id).started && (run.id||'') > (latest.get(run.task_id).id||''))) latest.set(run.task_id, run);
     }
+    const snapshot=state||{tasks,runs};
     return tasks.map(task => {
-      const run = latest.get(task.id) || null;
+      const run = PanelWorkspace.runSelection(snapshot,task.id).current || latest.get(task.id) || null;
       return {task, run, status:run?.status || task.latest_status || 'pending', stale:Boolean(run?.stale)};
-    }).filter(row => (filter === 'all' || row.status === filter || (filter === 'unfinished' && ['pending','running','waiting_user','waiting_external','paused','awaiting_review'].includes(row.status))) && (!query.trim() || `${row.task.name || ''} ${row.task.project || ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())));
+    }).filter(row => (filter === 'all' || row.status === filter || (filter === 'unfinished' && ['pending','running','waiting_user','waiting_external','paused','awaiting_review'].includes(row.status))) && (!query.trim() || `${row.task.name || ''} ${row.task.project || ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))).sort((a,b)=>Number(['succeeded','cancelled'].includes(a.status))-Number(['succeeded','cancelled'].includes(b.status))||PanelWorkspace.meaningfulUpdated(snapshot,b.task.id)-PanelWorkspace.meaningfulUpdated(snapshot,a.task.id)||(a.task.id<b.task.id?-1:a.task.id>b.task.id?1:0));
   }
 };
 

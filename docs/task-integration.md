@@ -1,5 +1,7 @@
 # 任务与项目活动接入
 
+可直接在隔离 TESTDATA 执行的完整闭环和两种 JSON schema 示例，见 [Agent 安装与接入 Runbook](agent-setup.md)。
+
 面板是只读展示端；通过本机 CLI 主动写入少量经过筛选的信息。没有远程执行接口、定时器或自动任务扫描。不要把用户聊天、内部代理工作记录或 shell 原始输出直接倾倒到数据库。
 
 ```sh
@@ -12,7 +14,7 @@ panel log "$RUN" '校验输入完成'
 panel heartbeat "$RUN"
 # 新运行成功前，先记录实际产出、检查范围、依据与限制
 panel closeout-record "$RUN" --summary '实际产出' --scope '实际检查范围' --verification passed --evidence '实际检查依据' --limits '未覆盖部分' --no-artifact-reason '本任务无需文件产出的真实理由'
-panel closeout "$RUN" --record '上一步返回的-record_id' 
+panel closeout "$RUN" --record '上一步返回的-record_id'
 panel status
 ```
 
@@ -47,7 +49,7 @@ panel software-register panel --name 'dots-panel' --description '本地资源与
 
 软件 kind 只允许 dots-panel / python / git；只读检查本项目文件或已知程序是否可用，不扫描目录、不执行注册条目的自定义命令、不暴露可执行文件路径。available 不等于 running，进程运行状态保持未知。原生软件页可以关闭当前面板窗口，重新打开使用本机快捷方式。Web 页明确禁用启动 / 停止，所有 HTTP 仍只读。
 
-四页导航：总览汇总可见资源、活跃记录与计划计数；活动按已登记 task_id 分组并能返回列表；定时任务展示明确登记的元数据与未接入标记；软件展示可用性检查时间、介绍和能力边界。
+相关页面：总览汇总可见资源、活跃记录与计划计数；活动按已登记 task_id 分组并能返回列表；定时任务展示明确登记的元数据与未接入标记；软件展示可用性检查时间、介绍和能力边界。
 
 总览“工作区”展示每个登记任务的最新生命周期状态，可按全部 / 待开始 / 进行中 / 已完成 / 已取消 / 失败筛选。筛选保持到用户再次切换，自动刷新不重置。记录新鲜度是独立辅助提示，不能把 running 改显示成“停止”或其他终态。最近100次运行窗口之外的任务仍使用数据库真实最新状态，不会错误降为待开始；没有运行记录的任务才显示待开始。
 
@@ -66,7 +68,7 @@ panel bind "$TASK_ID" --source-type cloud_thread --thread-id "$ACTUAL_THREAD_ID"
 panel ingest "$TASK_ID" '面向用户的简短进度摘要' --source-event-id "$ACTUAL_EVENT_ID" --role assistant --stage implementation --state in_progress --observed-at "$SOURCE_EVENT_TIME" --observed-status running
 ```
 
-变量均由调用方从真实创建 / 读取结果取得，不是可直接使用的示例 ID。observed-at 必须是带时区 ISO 时间，也记录为 UTC epoch；UI 按查看机器当地时间显示。environment-id 仅在确认存在实际 ID 时传入，保存于私有运行数据。source-type 允许 cloud_thread / codex_thread；environment-kind 允许 cloud / desktop / remote，但不能因此切换到用户未授权的环境。
+变量均由调用方从真实创建 / 读取结果取得，不是可直接使用的示例 ID。observed-at 必须是带时区 ISO 时间，也记录为 UTC epoch；UI 按所选显示时区显示。environment-id 仅在确认存在实际 ID 时传入，保存于私有运行数据。source-type 允许 cloud_thread / codex_thread；environment-kind 允许 cloud / desktop / remote，但不能因此切换到用户未授权的环境。
 
 可选 --url 只接受官方工具实际返回、已确认用户可打开的 HTTPS 地址，限定平台域名 chatgpt.com / chat.openai.com / codex.openai.com。没有返回可分享链接时留空，不能拼接 ID 猜链接。Web 不展示或打开 codex:// 深链，不显示私人环境 ID。
 

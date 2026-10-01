@@ -1,6 +1,7 @@
+<!-- Recovery integration: retained baseline guidance with current GitHub boundary corrected. -->
 # Agent 安装和修改指南
 
-先读 README.md、docs/install.md 与 docs/privacy.md。遵循用户最新授权；不访问用户未请求的其他机器或项目。
+先读 README.md、docs/agent-setup.md、docs/install.md 与 docs/privacy.md。遵循用户最新授权；不访问用户未请求的其他机器或项目。
 
 1. 明确用户要安装的实际 dot 云桌面，区分执行 shell 和桌面；不要把“我的电脑”替换成云电脑
 2. 先确认 SOURCE 和独立 DATA 两个目录规划，避免散放；保留既有文件和修改

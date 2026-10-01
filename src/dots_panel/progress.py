@@ -91,3 +91,17 @@ def task_progress(snapshot, task_id, now=None):
             active.append(agent)
     active.sort(key=lambda a:(-a['observed_at'],a['id']))
     return {'scope':'task' if not latest and meaningful and activity_run(meaningful[0]) is None else 'run','open_runs':[{'id':r['id'],'status':r['status'],'note':r.get('note',''),'started':r.get('started')} for r in open_runs],'latest':latest,'steps':updates[:8],'milestones':meaningful[:5],'active_participants':active,'current_run_id':current['id'] if current else None,'current_step':latest['current_step'] if latest else meaningful[0]['message'] if meaningful else (current.get('note','') if current else ''), 'updated_at':latest['created'] if latest else meaningful[0]['created'] if meaningful else current.get('started') if current else None,'counts':{'completed':latest['completed'],'total':latest['total'],'unit':latest['unit']} if latest and latest.get('completed') is not None and current and current['status']=='running' else None}
+
+
+def task_meaningful_updated(snapshot, task_id):
+    """Sorting timestamp: actual work/lifecycle evidence, never a heartbeat."""
+    runs = {row.get('id', (task_id, row.get('started'))): row for key in ('runs', 'latest_runs', 'current_runs', 'open_runs')
+            for row in snapshot.get(key, []) if row.get('task_id') == task_id}
+    values = [row.get('created', 0) for row in snapshot.get('tasks', []) if row['id'] == task_id]
+    values += [row.get(field, 0) for row in runs.values() for field in ('started', 'finished')]
+    values += [row.get('created', 0) for row in snapshot.get('activity', [])
+               if row.get('task_id') == task_id and row.get('stage') not in ('heartbeat', 'assignment', 'work_type')]
+    values += [row.get('created', 0) for row in snapshot.get('progress_updates', []) if row.get('run_id') in runs]
+    values += [row.get('created', 0) for row in snapshot.get('events', [])
+               if row.get('run_id') in runs and row.get('kind') != 'heartbeat' and row.get('stage') != 'heartbeat']
+    return max((value for value in values if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)), default=0)

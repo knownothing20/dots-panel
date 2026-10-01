@@ -6,8 +6,8 @@ from dots_panel.app import ROOT
 class ReconstructedCompactTests(unittest.TestCase):
     def test_activities_use_shared_filter_and_separate_search(self):
         js=(ROOT/'web/app.js').read_text()
-        self.assertIn("PanelWorkspace.rows(state.tasks,state.current_runs||state.latest_runs||state.runs,workspaceFilter,workspaceQuery)",js)
-        self.assertIn("PanelWorkspace.rows(state.tasks,state.current_runs||state.latest_runs||state.runs,workspaceFilter)",js)
+        self.assertIn("PanelWorkspace.rows(state.tasks,state.current_runs||state.latest_runs||state.runs,workspaceFilter,workspaceQuery,state)",js)
+        self.assertIn("PanelWorkspace.rows(state.tasks,state.current_runs||state.latest_runs||state.runs,workspaceFilter,'',state)",js)
     def test_activity_cards_are_compact_css(self):
         css=(ROOT/'web/style.css').read_text()
         self.assertIn('.task-grid,#task-list.task-grid,#agent-cards,.registry-grid,.skill-grid{display:grid;',css)

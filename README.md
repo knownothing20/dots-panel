@@ -14,7 +14,7 @@ An open-source, third-party task dashboard for **OpenAI dot’s cloud computer i
 
 无需 npm、Docker 或云数据库。原生视图直接读取本地记录；你的工作数据与公开源码分开保存。
 
-[快速开始](#快速开始) · [看一个任务](#看一个任务) · [功能与边界](#功能与边界) · [安装文档](docs/install.md) · [隐私说明](docs/privacy.md)
+[快速开始](#快速开始) · [看一个任务](#看一个任务) · [功能与边界](#功能与边界) · [安装文档](docs/install.md) · [Agent 完整接入指南](docs/agent-setup.md) · [隐私说明](docs/privacy.md)
 
 ![任务总览示意：活动、状态与成果入口](docs/images/overview-demo.svg)
 *原创界面示意 / 合成数据，非实时截图。*

@@ -112,7 +112,7 @@ function renderStatusFilters(state) {
       const button=bar.children[index];button.textContent=label+' '+PanelWorkspace.rows(tasks,runs,value).length;
       button.classList.toggle('selected',workspaceFilter===value);button.setAttribute('aria-pressed',String(workspaceFilter===value));
     }
-    const select=bar.lastElementChild, exact=!main.some(([value])=>value===workspaceFilter);
+    const select=bar.lastElementChild, exact=!main.some(([value])=>value===workspaceFilter,'',state);
     select.setAttribute('aria-label',phrase('更多状态筛选','More status filters'));
     select.classList.toggle('selected',exact);
     // Don't rebuild an open platform-native options list during background refresh.
@@ -527,7 +527,7 @@ function render(state) {
   $('task-count').textContent = state.tasks.length;
   $('task-empty').hidden = state.tasks.length > 0;
   $('task-list').replaceChildren();
-  for (const {task,run} of PanelWorkspace.rows(state.tasks,state.current_runs||state.latest_runs||state.runs,workspaceFilter,workspaceQuery)) {
+  for (const {task,run} of PanelWorkspace.rows(state.tasks,state.current_runs||state.latest_runs||state.runs,workspaceFilter,workspaceQuery,state)) {
     $('task-list').append(taskCard(task,run,state));
   }
   $('project-activity').replaceChildren();
@@ -553,7 +553,7 @@ function render(state) {
   $('active-work').replaceChildren();
   $('workspace-filter').value=workspaceFilter;
   renderStatusFilters(state);
-  const workspace=PanelWorkspace.rows(state.tasks,state.current_runs||state.latest_runs||state.runs,workspaceFilter);
+  const workspace=PanelWorkspace.rows(state.tasks,state.current_runs||state.latest_runs||state.runs,workspaceFilter,'',state);
   if(!workspace.length)$('active-work').append(element('p',t('没有符合此状态的任务'),'empty-caption'));
   for(const {task,run} of workspace)$('active-work').append(taskCard(task,run,state));
   renderSchedules(state.schedules||[]);
