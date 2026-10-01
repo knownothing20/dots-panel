@@ -40,7 +40,8 @@ for(const fields of [{completed:null,total:null},{completed:1,total:0},{complete
 assert.equal(PanelAgents.taskLead(state,'goal',1000).agent.id,'worker','Fresh parallel contributor leads despite idle original owner');
 assert.equal(PanelAgents.taskLead(state,'goal',1000).owner.id,'owner','Original ownership is preserved');
 assert.deepEqual(PanelAgents.taskLead(state,'goal',1000).active.map(a=>a.id),['worker']);
-assert.equal(PanelAgents.taskLead(state,'goal',1200).agent.id,'owner','Stale observation cannot prove current activity');
+assert.equal(PanelAgents.taskLead(state,'goal',1200).agent.id,'future','Current-run assignment survives observation expiry');
+assert.equal(PanelAgents.taskLead(state,'goal',1200).active.length,0,'Stale observation cannot prove current activity');
 assert.equal(PanelAgents.observation(state.agents[4],state,1000).known,false);
 assert.equal(PanelAgents.observation(state.agents[3],state,1000).recent,false,'Future observations are not fresh');
 assert.equal(PanelAgents.taskLead({...state,runs:state.runs.map(r=>({...r,status:'succeeded'})),latest_runs:[]},'goal',1000).active.length,0,'Finished run never indicates current execution');

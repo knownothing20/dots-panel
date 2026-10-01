@@ -7,7 +7,7 @@ import argparse
 from .outputs import TaskFolderOpener, task_output_summary, output_summary_text, output_main_text
 import base64
 from .doctor import doctor_rows
-from .progress import task_progress, current_run, task_meaningful_updated
+from .progress import task_progress, current_run, task_meaningful_updated, agent_observation
 from .app import artifact_delivery_label, verification_label, attention_items, attention_draft, artifact_kind_label, VERSION, verified_repository_url, verified_link, skill_origin_label, skill_publication_label
 from contextlib import contextmanager
 import json
@@ -126,6 +126,27 @@ def popup_position(x, y, anchor_width, anchor_height, width, height, screen_widt
 def agent_status_label(value, language="zh"):
     labels = {"running": ("已观察运行", "Observed running"), "idle": ("空闲", "Idle"), "blocked": ("受阻", "Blocked"), "unavailable": ("不可用", "Unavailable"), "unknown": ("状态未知", "Status unknown")}
     return labels.get(value, labels["unknown"])[language == "en"]
+
+
+def participant_caption(progress, language='zh'):
+    if progress['assigned_participants']:
+        return 'Assigned participant: ' if language == 'en' else '已分派参与者：'
+    return 'Owner: ' if language == 'en' else '负责人：'
+
+
+def participant_observation(agent, snapshot, language='zh', now=None, timezone=DEFAULT_TIMEZONE):
+    observation = agent_observation(agent, snapshot, now)
+    label = agent_status_label(observation['status'], language)
+    if observation['known'] and not observation['recent']:
+        label += ' · Older; current state unconfirmed' if language == 'en' else ' · 较早，当前待核对'
+    if observation['known']:
+        label += ' · ' + observation_label(agent['observed_at'], language, timezone)
+    return label
+
+
+def run_participant_names(snapshot, run_id, language='zh'):
+    ids = {a['agent_id'] for a in snapshot.get('agent_run_assignments', []) if a['run_id'] == run_id}
+    return ', '.join(agent_text(a, 'name', language) for a in snapshot.get('agents', []) if a['id'] in ids)
 
 
 def observation_label(value, language="zh", timezone=DEFAULT_TIMEZONE):
@@ -1342,11 +1363,10 @@ class Dashboard:
             description = progress["current_step"].split("\n",1)[0] if progress["current_step"] else (row.get("run") or {}).get("lifecycle_reason") or activity_summary(self.snapshot, row["id"], self.language)
             card.create_text(20, 103, text=self.cut_text(description, width-40, 14), anchor="w", fill=self.muted, font=(self.font, -14))
             progress = task_progress(self.snapshot, row["id"])
-            primary_owner = assigned_agent(self.snapshot, row["id"])
-            owner = next(iter(progress["active_participants"]), primary_owner)
+            owner = progress["lead"]["agent"]
             owner_name = agent_text(owner, "name", self.language) if owner else ("Unassigned" if self.language == "en" else "未分配")
-            observed = agent_status_label(owner.get("status") if owner and owner.get("observed_at") is not None else "unknown", self.language)
-            owner_line = (("Working: " if self.language == "en" else "当前执行：") if progress["active_participants"] else ("Owner: " if self.language == "en" else "负责人：")) + owner_name + " · " + observed
+            observed = participant_observation(owner, self.snapshot, self.language, timezone=self.timezone)
+            owner_line = participant_caption(progress, self.language) + owner_name + " · " + observed + (" · Run " if self.language == "en" else " · 运行 ") + str(progress["current_run_id"] or "—")
             detail = owner_line + " | " + (row["warning"] or (self.t("最新阶段") + ": " + row["values"][3]))
             color = "#8b6b36" if row["warning"] else self.muted
             card.create_text(20, 127, text=self.cut_text(detail, width-40, 12), anchor="w", fill=color, font=(self.font, -12))
@@ -1499,6 +1519,9 @@ class Dashboard:
         active = progress["active_participants"]
         status = ("Task-level update · run attribution not recorded" if en else "任务级近况 · 未登记所属运行") if progress.get("scope") == "task" else (("● Recently observed working" if en else "● 最近观察到正在执行") if active else ("Latest recorded step · execution unconfirmed" if en else "最近记录步骤 · 执行状态待确认"))
         self.label(box, status, 13, self.accent if active else self.muted, raw=True).pack(anchor="w")
+        if progress['assigned_participants']:
+            names = run_participant_names(self.snapshot, progress['current_run_id'], self.language)
+            self.label(box, ("Assigned: " if en else "已分派：") + names + (" · Run " if en else " · 运行 ") + progress['current_run_id'], 12, self.muted, raw=True, wrap=800).pack(anchor="w", fill="x", pady=(4, 0))
         step = progress["current_step"].split("\n", 1)[0]
         self.label(box, step, 17, self.fg, True, raw=True, wrap=800).pack(anchor="w", fill="x", pady=(7, 5))
         if len(progress.get("open_runs", [])) > 1:
@@ -1517,6 +1540,7 @@ class Dashboard:
             if len(progress.get("open_runs", [])) > 1:
                 for run in progress["open_runs"]:
                     caption = self.t(STATUS.get(run["status"], run["status"]))+" · "+(run.get("note") or run["id"])
+                    caption += " · " + ("Run " if en else "运行 ") + run["id"] + " · " + (run_participant_names(self.snapshot, run["id"], self.language) or ("Unassigned" if en else "未分配"))
                     self.label(box, caption, 13, self.muted, raw=True, wrap=800).pack(anchor="w", fill="x", pady=(5,0))
             entries = progress["steps"] or progress["milestones"]
             for entry in entries:
@@ -1546,12 +1570,12 @@ class Dashboard:
         self.label(titleline, row["values"][0], 21, bold=True, raw=True).pack(side="left")
         self.label(titleline, row["values"][2], 13, self.accent, raw=True).pack(side="right", padx=6)
         progress = task_progress(self.snapshot, self.selected_task)
-        primary_owner = assigned_agent(self.snapshot, self.selected_task)
-        agent = next(iter(progress["active_participants"]), primary_owner)
+        agent = progress["lead"]["agent"]
         owner = agent_text(agent, "name", self.language) if agent else ("Unassigned" if en else "未分配")
-        current = [item for item in agent_work(self.snapshot, agent)["current"] if item["task"]["id"] == self.selected_task] if agent else []
+        current = [item for item in agent_work(self.snapshot, agent)["current"] if item["run_id"] == progress["current_run_id"]] if agent and any(a["id"] == agent["id"] for a in progress["active_participants"]) else []
         work = work_type_label(current[0]["work_type"], self.language) if current else ("Standby" if en else "待命") if agent and agent.get("status") == "idle" else ("Unconfirmed" if en else "未确认")
-        meta = (("Working: " if en else "当前执行：") if progress["active_participants"] else ("Owner: " if en else "负责人：")) + owner + "  ·  " + work + "  ·  " + ("Updated: " if en else "更新：") + row["values"][5]
+        meta = participant_caption(progress, self.language) + owner + "  ·  " + work + "  ·  " + ("Updated: " if en else "更新：") + row["values"][5]
+        meta += " · " + participant_observation(agent, self.snapshot, self.language, timezone=self.timezone) + (" · Run " if en else " · 运行 ") + str(progress["current_run_id"] or "—")
         self.label(header, meta, 12, self.muted, raw=True).pack(anchor="w", pady=(7, 3))
         self.render_output_bar(header, self.selected_task, detail=True)
         closeout = (row.get("run") or {}).get("closeout")
@@ -1817,12 +1841,11 @@ class Dashboard:
             values = row["values"]
             summary = values[1] + " · " + values[3] + "\n" + self.t("最后更新：") + values[5]
             progress = task_progress(self.snapshot, row["id"])
-            primary_owner = assigned_agent(self.snapshot, row["id"])
-            owner = next(iter(progress["active_participants"]), primary_owner)
+            owner = progress["lead"]["agent"]
             owner_name = agent_text(owner, "name", self.language) if owner else ("Unassigned" if self.language == "en" else "未分配")
-            observed = agent_status_label(owner.get("status") if owner and owner.get("observed_at") is not None else "unknown", self.language)
-            owner_caption = ("Working: " if self.language == "en" else "当前执行：") if progress["active_participants"] else ("Owner: " if self.language == "en" else "负责人：")
-            summary = owner_caption + owner_name + " · " + observed + " · " + values[1] + "\n" + values[3] + " · " + self.t("最后更新：") + values[5]
+            observed = participant_observation(owner, self.snapshot, self.language, timezone=self.timezone)
+            owner_caption = participant_caption(progress, self.language)
+            summary = owner_caption + owner_name + " · " + observed + (" · Run " if self.language == "en" else " · 运行 ") + str(progress["current_run_id"] or "—") + " · " + values[1] + "\n" + values[3] + " · " + self.t("最后更新：") + values[5]
             if len(progress.get("open_runs", [])) > 1:
                 summary += "\n" + ("Parallel unfinished runs: " if self.language == "en" else "并行未完成运行：") + str(len(progress["open_runs"]))
             if progress["current_step"]:

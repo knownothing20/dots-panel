@@ -356,6 +356,10 @@ class Store(RecoveryStoreMixin):
             CREATE TABLE IF NOT EXISTS events (
               id INTEGER PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),
               created REAL NOT NULL, message TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS task_receipts (
+              task_id TEXT NOT NULL REFERENCES tasks(id), request_id TEXT NOT NULL,
+              run_id TEXT NOT NULL REFERENCES runs(id), content_sha256 TEXT NOT NULL,
+              PRIMARY KEY(task_id,request_id));
             """)
             db.execute(TABLE_SQL)
             db.execute(PLATFORM_TABLE_SQL)
@@ -410,6 +414,33 @@ class Store(RecoveryStoreMixin):
         with self.connect() as db:
             db.execute("INSERT INTO runs(id,task_id,status,started,updated,finished,note,closeout_required) VALUES(?,?,?,?,?,?,?,1)", (key, task_id, "running", now, now, None, text(note) if note else ""))
         return key
+
+    def receive(self, task_id, request_id, note, reason, evidence, next_step):
+        """Atomically record accepted work awaiting dispatch; never starts an executor."""
+        request_id = text(request_id, 200)
+        note, reason, evidence, next_step = (text(value, 2000) for value in (note, reason, evidence, next_step))
+        content = json.dumps([note, reason, evidence, next_step], ensure_ascii=False).encode()
+        fingerprint = hashlib.sha256(content).hexdigest()
+        now, key = time.time(), uuid.uuid4().hex[:16]
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            task = db.execute("SELECT project FROM tasks WHERE id=?", (task_id,)).fetchone()
+            if not task:
+                raise ValueError("Register or select the matching activity before receive")
+            previous = db.execute("SELECT * FROM task_receipts WHERE task_id=? AND request_id=?", (task_id, request_id)).fetchone()
+            if previous:
+                if previous["content_sha256"] != fingerprint:
+                    raise ValueError("Request ID already records different work; inspect before retrying")
+                status = db.execute("SELECT status FROM runs WHERE id=?", (previous["run_id"],)).fetchone()["status"]
+                return {"run_id": previous["run_id"], "status": status, "deduplicated": True, "record_only": True}
+            db.execute("INSERT INTO runs(id,task_id,status,started,updated,note,lifecycle_reason,lifecycle_evidence,next_step,closeout_required) VALUES(?,?,?,?,?,?,?,?,?,1)",
+                       (key, task_id, "waiting_external", now, now, note, reason, evidence, next_step))
+            db.execute("INSERT INTO task_receipts VALUES(?,?,?,?)", (task_id, request_id, key, fingerprint))
+            message = f"待派发 / Awaiting dispatch: {note} | {reason} | Next: {next_step} | Evidence: {evidence}"
+            db.execute("INSERT INTO events(run_id,created,message) VALUES(?,?,?)", (key, now, message))
+            db.execute("INSERT INTO activity(created,project,role,stage,message,task_id,state) VALUES(?,?,?,?,?,?,?)",
+                       (now, task["project"], "system", "received", message, task_id, "planned"))
+        return {"run_id": key, "status": "waiting_external", "deduplicated": False, "record_only": True}
 
     def _gate_success(self, key, from_status=None):
         with self.connect() as db:
@@ -1129,6 +1160,13 @@ def main():
     start = subs.add_parser("start")
     start.add_argument("task_id")
     start.add_argument("--note", default="")
+    receive = subs.add_parser("receive", help="Atomically record waiting-for-dispatch work; does not dispatch")
+    receive.add_argument("task_id")
+    for field in ("request-id", "note", "reason", "evidence", "next-step"):
+        receive.add_argument("--" + field, required=True)
+    dispatch = subs.add_parser("dispatch-check", help="Read-only recorded conflict hint; never proves an executor is free")
+    dispatch.add_argument("task_id")
+    dispatch.add_argument("agent_id")
     for command in ("heartbeat", "log", "finish"):
         sub = subs.add_parser(command)
         sub.add_argument("run_id")
@@ -1273,6 +1311,11 @@ def main():
         if args.command == "doctor":
             print(json.dumps(install_doctor(ROOT, args.data_dir), ensure_ascii=False, indent=2))
             return
+        if args.command == "dispatch-check":
+            from .desktop_view import ReadOnlyStore
+            from .progress import dispatch_check
+            print(json.dumps(dispatch_check(ReadOnlyStore(args.data_dir).snapshot(), args.task_id, args.agent_id), ensure_ascii=False))
+            return
         store = Store(args.data_dir)
         if args.command == "serve":
             server = make_server(store, args.port)
@@ -1287,6 +1330,8 @@ def main():
             print(store.register(args.id, args.name, args.project, args.tracking_mode))
         elif args.command == "start":
             print(store.start(args.task_id, args.note))
+        elif args.command == "receive":
+            print(json.dumps(store.receive(args.task_id, args.request_id, args.note, args.reason, args.evidence, args.next_step), ensure_ascii=False))
         elif args.command == "activity":
             store.activity(args.project, args.role, args.stage, args.message, args.task_id, args.state)
         elif args.command == "bind":

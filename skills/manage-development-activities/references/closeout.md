@@ -11,6 +11,10 @@
 - Finish a run as succeeded only when its defined goal is met; retain bindings and history for continuation
 - Deliver the result and accessible artifacts to the user; registration alone is not delivery
 
+## Checkpoint before waiting or handoff
+
+Save the user-facing goal and constraints, actual outcomes and deliverable references, verification and remaining limits, blocker and next step in the same activity. The coordinator owns receipt and passes the existing run ID and request ID to any replacement executor; a replacement verifies them before work. Preserve bindings and participant history, and do not reuse a worker currently occupied by a different goal. Long-term memory has no fixed guarantee; retain a useful sanitized checkpoint rather than raw conversation or hidden reasoning. An independent reviewer did not produce or edit the deliverable it reviews.
+
 ## Waiting is not completion
 
 Waiting for approval, user input, an external result, a disconnected executor, or a future scheduled check leaves the relevant task open. State what is awaited, the latest observation and the next authorized step. Never mark a task succeeded merely to remove a running badge. A short assistant turn can end while the task remains unfinished.

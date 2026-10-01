@@ -9,7 +9,8 @@ SOURCE=/absolute/path/to/dots-panel
 DATA=/absolute/path/to/dots-panel-data
 panel() { sh "$SOURCE/scripts/start.sh" --data-dir "$DATA" "$@"; }
 panel register example-check --name '示例检查' --project '示例项目'
-RUN=$(panel start example-check --note '执行已授权检查')
+# 此旧式start示例仅适用于已经实际开始的执行；新接收请求先走下文receive流程
+RUN=$(panel start example-check --note '已实际开始的授权检查')
 panel log "$RUN" '校验输入完成'
 panel heartbeat "$RUN"
 # 新运行成功前，先记录实际产出、检查范围、依据与限制
@@ -19,6 +20,14 @@ panel status
 ```
 
 `register` 的 ID 唯一，不会默默覆盖；同一个任务可以有多次运行。`start` 只能引用已登记任务。`log` 也更新心跳。结束状态可选 succeeded / failed / cancelled；结束后不允许继续改写运行。面板最近显示 500 个任务、100 次运行和100条步骤，数据库保留全部；当前不提供自动清理策略。
+
+## 先接收再派发
+
+新可执行请求先选择匹配活动。协调者调用 `receive TASK_ID --request-id STABLE_REQUEST_ID --note GOAL --reason PENDING_REASON --evidence REQUEST_EVIDENCE --next-step DISPATCH_NEXT_STEP`，原子写入待派发 `waiting_external` run与接收事件；相同request-id/内容并发重试返回同一run。协调者将返回的run_id和request-id交给执行者，执行者不再单独start。不同内容复用同ID会被拒绝，终结run的receipt重试不会重开。
+
+实际派发前通过平台工具核对执行者身份、当前主题和状态；`dispatch-check TASK_ID AGENT_ID` 仅补充本地窄证据冲突提示，不承诺空闲、不设平台锁、不抢占。新无关目标不能steer进忙碌会话。同目标沿用活动；原执行者忙于别的主题时另派或明确等待。实际执行确认后，立刻agent-run-assign、agent-observe、transition并status读回；失败也记录实际原因与下一步。
+
+详见 [配套Skill工具契约](../skills/manage-development-activities/references/tool-contract.md)。以上先后顺序与单主题要求属于workflow，Skill无法保证每轮触发；`receive`事务、幂等去重和终结run不可重开才是本地命令强制规则。
 
 ## 活动与开发阶段
 
@@ -184,4 +193,4 @@ sh scripts/start.sh --data-dir "$DATA" progress-update "$RUN_ID" \
 
 Counts are optional, measured stage values, not overall task percentages. Both values and a unit are required together. Source IDs deduplicate retries and reject conflicting content; repeated identical content does not create a milestone. Records are retained in the private DATA database; snapshots read a bounded recent set. Existing databases remain readable without this optional table.
 
-The view prioritizes unfinished runs: a freshly observed participant explicitly assigned to a running run leads; otherwise the newest unfinished run leads. Only when none remain unfinished does it show the newest terminal run. Other unfinished runs remain visible in the parallel-run summary. Historical latest-run records are retained separately. The view uses the selected run's meaningful progress. A newer unscoped ordinary milestone is explicitly labeled as task-level and supersedes an older structured count; a milestone attributed to another run does not replace the selected run; a new run does not inherit old counts, and non-running runs do not show active measured progress. Fresh observed running participants may lead the display while original ownership stays intact. Stale observations are explicitly unconfirmed. Heartbeat timestamps and elapsed time do not become meaningful-work updates. The interface is still read-only and does not automatically collect tool output or guarantee Skill invocation.
+The view prioritizes unfinished runs: a freshly observed participant explicitly assigned to a running run leads; otherwise the newest unfinished run leads. Only when none remain unfinished does it show the newest terminal run. Other unfinished runs remain visible in the parallel-run summary. Historical latest-run records are retained separately. The view uses the selected run's meaningful progress. A newer unscoped ordinary milestone is explicitly labeled as task-level and supersedes an older structured count; a milestone attributed to another run does not replace the selected run; a new run does not inherit old counts, and non-running runs do not show active measured progress. Assigned participants remain visible on their own run after observation expiry while original ownership stays intact. Other unfinished runs show their own IDs and assigned names, never impersonating the selected run. A fresh profile observation does not reactivate assignments to older topics after reassignment. Stale observations retain the last recorded state and are explicitly unconfirmed. Heartbeat timestamps and elapsed time do not become meaningful-work updates. The interface is still read-only and does not automatically collect tool output or guarantee Skill invocation.

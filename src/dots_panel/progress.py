@@ -51,16 +51,88 @@ def record_progress(store, run_id, current_step, result, next_step, evidence, co
     return {'id':fingerprint,'run_id':run_id,'deduplicated':False,'created':now}
 
 
+def observed_run_ids(snapshot, now=None):
+    """Fresh profiles only support their most recently assigned topic, not old ones."""
+    runs = {r['id']: r for key in ('runs', 'latest_runs', 'current_runs', 'open_runs') for r in snapshot.get(key, []) if 'id' in r}
+    active = set()
+    for agent in snapshot.get('agents', []):
+        if agent.get('status') != 'running' or not agent_observation(agent, snapshot, now)['recent']:
+            continue
+        links = [a for a in snapshot.get('agent_run_assignments', []) if a['agent_id'] == agent['id']]
+        latest = max((a.get('assigned_at', 0) for a in links), default=None)
+        newest = [runs.get(a['run_id']) for a in links if a.get('assigned_at', 0) == latest]
+        if not newest or any(r is None for r in newest):
+            continue
+        topics = {r['task_id'] for r in newest}
+        if len(topics) == 1 and any(r['status'] == 'running' for r in newest):
+            active.update(a['run_id'] for a in links if a['run_id'] in runs and runs[a['run_id']]['task_id'] in topics and runs[a['run_id']]['status'] == 'running')
+    return active
+
+
 def current_run(snapshot, task_id, now=None):
     """Fresh assigned execution first, then newest unfinished, then newest terminal."""
     now = time.time() if now is None else now
     runs = {r.get('id', str(i)):r for i,r in enumerate([*snapshot.get('runs',[]), *snapshot.get('latest_runs',[]), *snapshot.get('open_runs',[])]) if r['task_id']==task_id}
     open_states = {'pending','running','waiting_user','waiting_external','paused','awaiting_review'}
-    fresh = {a['id'] for a in snapshot.get('agents',[]) if a.get('status')=='running' and isinstance(a.get('observed_at'),(int,float)) and 0 <= now-a['observed_at'] <= snapshot.get('stale_after_seconds',120)}
-    active_ids = {a['run_id'] for a in snapshot.get('agent_run_assignments',[]) if a['agent_id'] in fresh}
+    active_ids = observed_run_ids(snapshot, now)
     def order(run):
         return (run['status'] in open_states, run['status']=='running' and run.get('id') in active_ids, run.get('started',0), run.get('id',''))
     return max(runs.values(),key=order,default=None)
+
+
+def agent_observation(agent, snapshot, now=None):
+    now = time.time() if now is None else now
+    observed = (agent or {}).get('observed_at')
+    known = isinstance(observed, (int, float)) and not isinstance(observed, bool) and math.isfinite(observed)
+    return {'known': known, 'recent': known and 0 <= now-observed <= snapshot.get('stale_after_seconds', 120),
+            'status': agent.get('status', 'unknown') if agent and known else 'unknown'}
+
+
+def task_participants(snapshot, task_id, now=None):
+    """Keep assignment identity independently of observation age, scoped to its run."""
+    current = current_run(snapshot, task_id, now)
+    agents = {a['id']: a for a in snapshot.get('agents', [])}
+    owner_id = next((a['agent_id'] for a in snapshot.get('agent_assignments', []) if a['task_id'] == task_id), None)
+    links = [a for a in snapshot.get('agent_run_assignments', []) if current and a['run_id'] == current['id'] and a['agent_id'] in agents]
+    links.sort(key=lambda a: (-a.get('assigned_at', 0), a['agent_id']))
+    assigned = [agents[a['agent_id']] for a in links]
+    owner = agents.get(owner_id)
+    candidates = assigned or ([owner] if owner else [])
+    active = [a for a in candidates if current and current['status'] == 'running' and a.get('status') == 'running' and agent_observation(a, snapshot, now)['recent']
+              and (current['id'] in observed_run_ids(dict(snapshot, agents=[a]), now) if any(link['agent_id'] == a['id'] for link in snapshot.get('agent_run_assignments', [])) else not assigned)]
+    active.sort(key=lambda a: (-a['observed_at'], a['id']))
+    return {'assigned': assigned, 'active': active, 'owner': owner, 'agent': next(iter(active or assigned), owner),
+            'run_id': current['id'] if current else None}
+
+
+def dispatch_check(snapshot, task_id, agent_id, now=None):
+    """Narrow evidence hint, never a lock or a declaration of executor availability."""
+    now = time.time() if now is None else now
+    if not any(t['id'] == task_id for t in snapshot.get('tasks', [])):
+        raise ValueError('Unknown task ID')
+    agent = next((a for a in snapshot.get('agents', []) if a['id'] == agent_id), None)
+    if not agent:
+        raise ValueError('Unknown agent ID')
+    result = {'task_id': task_id, 'agent_id': agent_id, 'assessment': 'unverified', 'conflicts': [],
+              'record_only': True, 'platform_check_required': True}
+    observation = agent_observation(agent, snapshot, now)
+    links = [a for a in snapshot.get('agent_run_assignments', []) if a['agent_id'] == agent_id]
+    latest_time = max((a.get('assigned_at', 0) for a in links), default=None)
+    latest = [a for a in links if a.get('assigned_at', 0) == latest_time]
+    runs = {r['id']: r for key in ('runs', 'latest_runs', 'current_runs', 'open_runs') for r in snapshot.get(key, []) if 'id' in r}
+    # A missing/terminal latest assignment must not resurrect an older busy record.
+    latest_runs = [runs.get(a['run_id']) for a in latest]
+    if (not observation['recent'] or agent.get('status') != 'running' or latest_time is None
+            or agent['observed_at'] < latest_time or not latest_runs or any(r is None for r in latest_runs)):
+        return result
+    goals = {r['task_id'] for r in latest_runs}
+    if len(goals) != 1 or task_id in goals:
+        return result
+    result['conflicts'] = [{'task_id': r['task_id'], 'run_id': r['id'], 'assigned_at': latest_time,
+                            'observed_at': agent['observed_at']} for r in latest_runs if r['status'] == 'running']
+    if result['conflicts']:
+        result['assessment'] = 'recorded_conflict'
+    return result
 
 
 def task_progress(snapshot, task_id, now=None):
@@ -82,15 +154,8 @@ def task_progress(snapshot, task_id, now=None):
     meaningful = sorted([r for r in snapshot.get('activity',[]) if r.get('task_id')==task_id and r.get('created',0)>=(current.get('started',0) if current else 0) and r.get('stage') not in ('assignment','work_type','heartbeat') and (activity_run(r) is None or current and activity_run(r)==current['id'])],key=lambda r:(r['created'],str(r.get('id',''))),reverse=True)
     if latest and meaningful and meaningful[0]['created']>latest['created']:
         latest = None
-    active=[]
-    for agent in snapshot.get('agents',[]):
-        links=[r for r in snapshot.get('agent_run_assignments',[]) if r['agent_id']==agent['id'] and r['run_id'] in runs and runs[r['run_id']]['status']=='running']
-        primary=any(a['agent_id']==agent['id'] and a['task_id']==task_id for a in snapshot.get('agent_assignments',[]))
-        observed=agent.get('observed_at')
-        if agent.get('status')=='running' and isinstance(observed,(int,float)) and 0 <= now-observed <= snapshot.get('stale_after_seconds',120) and (links or (primary and any(r['status']=='running' for r in runs.values()))):
-            active.append(agent)
-    active.sort(key=lambda a:(-a['observed_at'],a['id']))
-    return {'scope':'task' if not latest and meaningful and activity_run(meaningful[0]) is None else 'run','open_runs':[{'id':r['id'],'status':r['status'],'note':r.get('note',''),'started':r.get('started')} for r in open_runs],'latest':latest,'steps':updates[:8],'milestones':meaningful[:5],'active_participants':active,'current_run_id':current['id'] if current else None,'current_step':latest['current_step'] if latest else meaningful[0]['message'] if meaningful else (current.get('note','') if current else ''), 'updated_at':latest['created'] if latest else meaningful[0]['created'] if meaningful else current.get('started') if current else None,'counts':{'completed':latest['completed'],'total':latest['total'],'unit':latest['unit']} if latest and latest.get('completed') is not None and current and current['status']=='running' else None}
+    participants = task_participants(snapshot, task_id, now)
+    return {'scope':'task' if not latest and meaningful and activity_run(meaningful[0]) is None else 'run','open_runs':[{'id':r['id'],'status':r['status'],'note':r.get('note',''),'started':r.get('started')} for r in open_runs],'latest':latest,'steps':updates[:8],'milestones':meaningful[:5],'active_participants':participants['active'],'assigned_participants':participants['assigned'],'lead':participants,'current_run_id':current['id'] if current else None,'current_step':latest['current_step'] if latest else meaningful[0]['message'] if meaningful else (current.get('note','') if current else ''), 'updated_at':latest['created'] if latest else meaningful[0]['created'] if meaningful else current.get('started') if current else None,'counts':{'completed':latest['completed'],'total':latest['total'],'unit':latest['unit']} if latest and latest.get('completed') is not None and current and current['status']=='running' else None}
 
 
 def task_meaningful_updated(snapshot, task_id):

@@ -205,6 +205,42 @@
             "zh": "这些是项目工作规范，不改变账户权限或平台安全要求。旧文件迁移、软件安装卸载、数据删除和公开发布按用户授权处理，不因显示规则而自动执行。",
             "en": "These are project workflow guidelines, not account permissions or overrides of platform safeguards. Handle migration, installation, removal, deletion and public sharing under user authorization, never merely because a rule is displayed."
           }
+        },
+        {
+          "id": "receipt-atomic",
+          "level": "enforced",
+          "title": {
+            "zh": "原子待派发登记",
+            "en": "Atomic dispatch receipt"
+          },
+          "body": {
+            "zh": "receive在既有活动下原子写入waiting_external运行与接收事件；相同request-id与内容重试复用运行，不重开终结记录。它不派发平台执行者。",
+            "en": "receive atomically records a waiting_external run and receipt on an existing activity. Identical request-ID retries reuse the run without reopening terminal work. It never dispatches a platform executor."
+          }
+        },
+        {
+          "id": "dispatch-order",
+          "level": "workflow",
+          "title": {
+            "zh": "先接收，再派发与核验",
+            "en": "Receive before dispatch and verify"
+          },
+          "body": {
+            "zh": "协调者唯一接收，把run与request-id交给执行者；执行者只核验续写。成功派发立即关联真实友好档案并读回，失败记录阻塞。Skill不能保证自动触发，CLI无平台锁。",
+            "en": "The coordinator owns receipt and passes run/request IDs to the worker, which verifies and continues them. Immediately link verified executor profiles after dispatch and read back; record failures. Skill invocation is not guaranteed; the CLI has no platform lock."
+          }
+        },
+        {
+          "id": "one-topic",
+          "level": "workflow",
+          "title": {
+            "zh": "单主题执行与交接",
+            "en": "One topic per executor"
+          },
+          "body": {
+            "zh": "不可把无关任务转入忙碌执行会话；同目标复用活动，原执行者忙别的主题时另派或明确排队。阶段保存目标、约束、成果、验证与下一步；长期上下文无固定保证，独立审核者不参与制作。",
+            "en": "Never steer unrelated work into a busy executor. Reuse the goal activity; use another executor or record waiting when the former one is busy elsewhere. Save sanitized goal, constraints, outcomes, checks and next step. Context retention is not guaranteed; independent reviewers do not produce the work."
+          }
         }
       ]
     }

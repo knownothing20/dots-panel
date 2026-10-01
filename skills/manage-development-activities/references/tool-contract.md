@@ -34,6 +34,27 @@ Treat the CLI's refusal to replace a different thread binding as a safety check.
 
 Verify the configured panel CLI's `--help` before using these operations; inspect the installed contract if it differs. Set `SOURCE` to the installed panel source directory and `DATA` to its private data directory. Use `sh "$SOURCE/scripts/start.sh" --data-dir "$DATA" --help` to verify configuration. Run it only in the authorized environment.
 
+### Atomic receipt and dispatch boundary
+
+The coordinator chooses the matching activity and owns receipt. Pass task ID, returned run ID, stable request ID and receipt fields to the worker. The worker verifies and writes the supplied run, never independently starts another. Re-delivering the same request uses the same ID and content; a later authorized request uses a new ID. Do not use a native worker path as a request ID.
+
+```sh
+panel receive "$TASK_ID" --request-id "$REQUEST_ID" --note "$GOAL_AND_SCOPE" --reason "$PENDING_DISPATCH_REASON" --evidence "$REQUEST_EVIDENCE" --next-step "$DISPATCH_NEXT_STEP"
+# Existing verified profile only; not an executor availability check:
+panel dispatch-check "$TASK_ID" "$PANEL_AGENT_KEY"
+# Now use the actual supported dispatch tool. Only after confirmed execution:
+panel agent-run-assign "$RUN_ID" "$PANEL_AGENT_KEY" --work-type development
+panel agent-observe "$PANEL_AGENT_KEY" --status running --observed-at "$OBSERVED_AT" --note "$SANITIZED_OBSERVATION"
+panel transition "$RUN_ID" --status running --from-status waiting_external --reason "$DISPATCH_RESULT" --evidence "$ACTUAL_EXECUTION_EVIDENCE" --next-step "$IMPLEMENTATION_STEP"
+panel status
+```
+
+`receive` requires an existing activity. A single SQLite transaction creates the `waiting_external` run, receipt and matching timeline event, with no transient running state. Identical concurrent retries deduplicate on `(task_id, request_id)`; changed content under the same ID is rejected. Retrying a receipt after its run finishes returns that finished run, never reopens it. These are enforced local command properties, not guaranteed Skill triggering or a platform dispatch transaction. Registering the activity and actually dispatching remain separate operations; record and reconcile failures at each boundary. `start` retains its legacy running behavior for already-started execution and does not replace receipt.
+
+For an older installed CLI without `receive`, explicitly record the request first with `activity --stage received --state planned`, then `start` and immediately `transition --status waiting_external --from-status running` with the pending-dispatch reason. This compatibility path is non-atomic and briefly records running: disclose that limitation, reconcile after interruption, and never pretend it dispatches anything. Upgrade only when authorized. There is no supported `queued` lifecycle enum.
+
+`dispatch-check` reads without modifying or initializing DATA. It emits `recorded_conflict` only when the latest explicit run assignment is to a single different activity, that run remains running, and a fresh running profile observation was recorded at or after that assignment. A tied different-topic assignment, missing run, old or pre-assignment observation, primary ownership alone, completed history, idle, and waiting states are insufficient; the result remains `unverified`, never “free.” It never resurrects an older association after a newer terminal assignment. The hint is not a platform lock and cannot eliminate races. Check supported executor state immediately before actual dispatch; record capacity waits rather than steering an unrelated busy worker or stealing its assignment.
+
 Bind an existing task:
 
 ```text
@@ -99,4 +120,4 @@ panel progress-update "$RUN_ID" --current-step "$STEP" --result "$RESULT" --next
 panel progress-update "$RUN_ID" --current-step "$STEP" --result "$RESULT" --next-step "$NEXT" --evidence "$EVIDENCE" --completed 240 --total 576 --unit frames --source-event-id "$STABLE_EVENT_ID"
 ```
 
-Use the installed help as authoritative. This appends an explicit user-facing milestone without changing lifecycle, primary owner or executor control. Retries with the same ID/content are deduplicated; a reused ID with different content is rejected. Completed and total must be supplied together with a unit and satisfy 0 <= completed <= total. Terminal runs cannot accept new progress. These counts are observations, not computed estimates of overall project completion. Read-only UIs may show fresh running participants and recent meaningful steps, but do not synthesize progress from heartbeat or elapsed time.
+Use the installed help as authoritative. This appends an explicit user-facing milestone without changing lifecycle, primary owner or executor control. Retries with the same ID/content are deduplicated; a reused ID with different content is rejected. Completed and total must be supplied together with a unit and satisfy 0 <= completed <= total. Terminal runs cannot accept new progress. These counts are observations, not computed estimates of overall project completion. Read-only UIs retain assigned identities per run, separately label fresh running observations or older unconfirmed observations, and show recent meaningful steps, but do not synthesize progress from heartbeat or elapsed time.

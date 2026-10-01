@@ -274,7 +274,7 @@ function taskCard(task,run,state) {
   if(work.open_runs.length>1){
     const parallel=disclosure(element('details','','task-steps'),expandedSteps,'parallel:'+task.id);parallel.append(element('summary',phrase(`并行未完成 · ${work.open_runs.length}`,`Unfinished runs · ${work.open_runs.length}`)));
     parallel.addEventListener('click',event=>event.stopPropagation());
-    for(const entry of work.open_runs){const line=element('div','','task-step');line.append(element('small',`${t(statuses[entry.status]||entry.status)} · ${stamp(entry.started)}${entry.id===work.current_run_id?phrase(' · 当前展示',' · Shown above'):''}`),element('p',entry.note||phrase('未登记开始说明','No start note recorded')));parallel.append(line);}
+    for(const entry of work.open_runs){const line=element('div','','task-step');line.append(element('small',`${t(statuses[entry.status]||entry.status)} · ${stamp(entry.started)}${entry.id===work.current_run_id?phrase(' · 当前展示',' · Shown above'):''}`),element('p',entry.note||phrase('未登记开始说明','No start note recorded')),element('small',`${phrase('运行','Run')} ${entry.id} · ${PanelAgents.runNames(state,entry.id,language)||t('未分配')}`));parallel.append(line);}
     card.append(parallel);
   }
   const bottom=element('div','','task-card-footer');bottom.append(element('span',`${phrase('进展记录','Progress recorded')} ${stamp(work.update?.created??work.latest?.created??null)}`));card.append(bottom);
@@ -356,11 +356,13 @@ function ownerBadge(taskId,state) {
   const lead=PanelAgents.taskLead(state,taskId),owner=lead.agent,row=element('div','','owner-badge');row.dataset.taskId=taskId;
   if(owner){
     const observation=PanelAgents.observation(owner,state);
-    const states={running:['工作中','Working'],idle:['空闲','Idle'],blocked:['受阻','Blocked'],unavailable:['不可用','Unavailable'],unknown:['未知','Unknown']};
+    const states={running:['已观察运行','Observed running'],idle:['空闲','Idle'],blocked:['受阻','Blocked'],unavailable:['不可用','Unavailable'],unknown:['未知','Unknown']};
     const observed=(states[observation.status]||states.unknown)[language==='en'?1:0];
     const active=lead.active.some(agent=>agent.id===owner.id);
-    const caption=element('span',`${active?phrase('当前参与者','Active participant'):t('负责人')} · ${PanelAgents.text(owner,'name',language)}${lead.active.length>1?' +'+(lead.active.length-1):''}`);
+    const assigned=lead.assigned.some(agent=>agent.id===owner.id);
+    const caption=element('span',`${assigned?phrase('已分派参与者','Assigned participant'):t('负责人')} · ${PanelAgents.text(owner,'name',language)}${lead.assigned.length>1?' +'+(lead.assigned.length-1):''}${assigned?' · '+phrase('运行 ','Run ')+lead.run_id:''}`);
     row.append(agentAvatar(owner),caption,element('small',`${phrase('人工观察','Manual observation')}: ${observed} · ${stamp(owner.observed_at)}${observation.known&&!observation.recent?phrase(' · 较早，当前待确认',' · Older; current state unconfirmed'):''}`));
+    if(lead.assigned.length>1)row.append(element('small',phrase('本运行参与者：','Run participants: ')+PanelAgents.runNames(state,lead.run_id,language)));
     if(active)row.classList.add('observed-running');
   }else row.append(element('span',`${t('负责人')} · ${t('未分配')}`));
   return row;
@@ -506,13 +508,13 @@ function render(state) {
     $('task-agent').append(ownerBadge(chosen.id,state));
     const progress=PanelWorkspace.workProgress(state,chosen.id,chosenRun);
     if(progress.open_runs.length>1)$('task-agent').append(element('small',phrase(`并行未完成 · ${progress.open_runs.length}`,`Unfinished runs · ${progress.open_runs.length}`),'empty-caption'));
-    for(const entry of progress.open_runs)if(entry.id!==progress.current_run_id)$('task-lifecycle-meta').append(element('p',`${phrase('其他未完成运行','Other unfinished run')}: ${t(statuses[entry.status]||entry.status)} · ${entry.note||phrase('未登记开始说明','No start note recorded')}`,'lifecycle-detail'));
+    for(const entry of progress.open_runs)if(entry.id!==progress.current_run_id)$('task-lifecycle-meta').append(element('p',`${phrase('其他未完成运行','Other unfinished run')}: ${t(statuses[entry.status]||entry.status)} · ${entry.note||phrase('未登记开始说明','No start note recorded')} · ${phrase('运行','Run')} ${entry.id} · ${PanelAgents.runNames(state,entry.id,language)||t('未分配')}`,'lifecycle-detail'));
     for(const [field,zh,en] of [['lifecycle_reason','状态原因','Reason'],['next_step','下一步','Next step'],['lifecycle_evidence','状态依据','Evidence']]){
       if(chosenRun?.[field])$('task-lifecycle-meta').append(element('p',`${phrase(zh,en)}: ${chosenRun[field]}`,'lifecycle-detail'));
     }
     if(chosenRun?.lifecycle_reason)$('task-lifecycle-meta').append(element('small',phrase('仅登记任务状态，不会控制执行者','Recorded lifecycle only; does not control the executor')));
     const owner=taskOwner(chosen.id,state);
-    if(owner){const current=PanelAgents.observation(owner,state).recent&&PanelAgents.work(state,owner).current.find(row=>row.task.id===chosen.id);$('task-agent').append(element('p',current?`${t('当前工作（按最近观察）')} · ${PanelAgents.type(current.work_type,language)}`:t(owner.status==='idle'?'待命 · 无当前任务':'未确认为当前工作'),'agent-current'));}
+    if(owner){const current=PanelAgents.taskLead(state,chosen.id).active.some(agent=>agent.id===owner.id)&&PanelAgents.work(state,owner).current.find(row=>row.run_id===progress.current_run_id);$('task-agent').append(element('p',current?`${t('当前工作（按最近观察）')} · ${PanelAgents.type(current.work_type,language)}`:t(owner.status==='idle'?'待命 · 无当前任务':'未确认为当前工作'),'agent-current'));}
   }
   $('session-binding').replaceChildren();
   const binding=(state.bindings||[]).find(item=>item.task_id===selected);

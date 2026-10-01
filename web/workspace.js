@@ -40,8 +40,7 @@ globalThis.PanelWorkspace = {
     const runs=[...new Map([...(state.runs||[]),...(state.latest_runs||[]),...(state.current_runs||[]),...(state.open_runs||[]),...(extra?.task_id===taskId?[extra]:[])].filter(row=>row.task_id===taskId).map(row=>[row.id,row])).values()];
     const newest=(a,b)=>b.started-a.started||(a.id<b.id?1:a.id>b.id?-1:0);
     const openRuns=runs.filter(row=>['pending','running','waiting_user','waiting_external','paused','awaiting_review'].includes(row.status)).sort(newest);
-    const freshAgents=new Set((state.agents||[]).filter(agent=>agent.status==='running'&&PanelAgents.observation(agent,state,now).recent).map(agent=>agent.id));
-    const activeRuns=new Set((state.agent_run_assignments||[]).filter(link=>freshAgents.has(link.agent_id)).map(link=>link.run_id));
+    const activeRuns=PanelAgents.observedRuns(state,now);
     const current=openRuns.find(row=>row.status==='running'&&activeRuns.has(row.id))||openRuns[0]||runs.slice().sort(newest)[0]||null;
     return {runs,openRuns,current};
   },
@@ -103,13 +102,31 @@ globalThis.PanelAgents = {
     const known=typeof agent?.observed_at==='number'&&Number.isFinite(observed);
     return {known,recent:known&&age>=0&&age<=Number(state.stale_after_seconds??120),status:known?agent.status:'unknown'};
   },
+  observedRuns(state,now=Date.now()/1000) {
+    const runs=new Map(['runs','latest_runs','current_runs','open_runs'].flatMap(key=>state[key]||[]).map(run=>[run.id,run])),active=new Set();
+    for(const agent of state.agents||[]) {
+      if(agent.status!=='running'||!this.observation(agent,state,now).recent)continue;
+      const links=(state.agent_run_assignments||[]).filter(link=>link.agent_id===agent.id);
+      const latest=Math.max(...links.map(link=>link.assigned_at||0));
+      const newest=links.filter(link=>(link.assigned_at||0)===latest).map(link=>runs.get(link.run_id));
+      if(!newest.length||newest.some(run=>!run))continue;
+      const topics=new Set(newest.map(run=>run.task_id));
+      if(topics.size===1&&newest.some(run=>run.status==='running'))for(const link of links){const run=runs.get(link.run_id);if(run?.status==='running'&&topics.has(run.task_id))active.add(run.id);}
+    }
+    return active;
+  },
   taskLead(state,taskId,now=Date.now()/1000) {
     const ownerId=(state.agent_assignments||[]).find(row=>row.task_id===taskId)?.agent_id;
     const agents=state.agents||[],owner=agents.find(row=>row.id===ownerId)||null;
-    const runs=new Map([...(state.runs||[]),...(state.latest_runs||[]),...(state.current_runs||[]),...(state.open_runs||[])].filter(run=>run.task_id===taskId&&run.status==='running').map(run=>[run.id,run]));
-    const active=agents.filter(agent=>this.observation(agent,state,now).recent&&agent.status==='running'&&((state.agent_run_assignments||[]).some(link=>link.agent_id===agent.id&&runs.has(link.run_id))||(agent.id===ownerId&&runs.size>0)));
+    const current=PanelWorkspace.runSelection(state,taskId,now).current;
+    const links=(state.agent_run_assignments||[]).filter(link=>current&&link.run_id===current.id&&agents.some(agent=>agent.id===link.agent_id)).slice().sort((a,b)=>(b.assigned_at||0)-(a.assigned_at||0)||(a.agent_id<b.agent_id?-1:a.agent_id>b.agent_id?1:0));
+    const assigned=links.map(link=>agents.find(agent=>agent.id===link.agent_id));
+    const active=(assigned.length?assigned:owner?[owner]:[]).filter(agent=>current?.status==='running'&&this.observation(agent,state,now).recent&&agent.status==='running'&&((state.agent_run_assignments||[]).some(link=>link.agent_id===agent.id)?this.observedRuns({...state,agents:[agent]},now).has(current.id):!assigned.length));
     active.sort((a,b)=>(b.observed_at||0)-(a.observed_at||0)||(a.id<b.id?-1:a.id>b.id?1:0));
-    return {agent:active[0]||owner,owner,active};
+    return {agent:active[0]||assigned[0]||owner,owner,active,assigned,run_id:current?.id||null};
+  },
+  runNames(state,runId,language='zh') {
+    return (state.agent_run_assignments||[]).filter(link=>link.run_id===runId).map(link=>(state.agents||[]).find(agent=>agent.id===link.agent_id)).filter(Boolean).map(agent=>this.text(agent,'name',language)).join(', ');
   },
   lifecycle(status, language='zh') {
     const labels={waiting_user:['等待用户','Waiting for user'],waiting_external:['等待外部结果','Waiting for external result'],paused:['已暂停记录','Recorded as paused'],awaiting_review:['等待验收','Awaiting review'],pending:['待开始','Pending'],running:['进行中','Running'],succeeded:['已完成','Succeeded'],failed:['失败','Failed'],cancelled:['已取消','Cancelled']};
