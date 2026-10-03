@@ -113,6 +113,6 @@ python3 "$SOURCE/scripts/desktop.py" open --data-dir "$DATA" --python /absolute/
 
 原生桌面同样提供 Auto / 中文 / English。Auto 按 LC_ALL → LC_MESSAGES → LANG 读取系统语言，中文 locale 使用中文，其他使用 English。选择只保存在独立 DATA/config/ui.json（私有权限）；任务数据库保持只读，任务和沟通摘要原文不改变。也可直接启动模块时加 `--language auto|zh|en` 临时覆盖；存储不可用时仅当前会话生效并提示，不会修改源码。
 
-v0.2 升级时先运行本地 CLI status 以创建 schedules/software 表和 tracking_mode 字段，再启动只读原生视图。旧任务默认迁移为 manual，不创建计划、不启动任何软件。验收八个导航页（总览、活动、Agent、定时任务、软件、规则、关于与版本、设置）、活动详情返回、空登记状态、未接入计划和软件动作限制。
+v0.2 升级时先明确运行本地 CLI init 以创建 schedules/software 表和 tracking_mode 字段，再启动只读原生视图。旧任务默认迁移为 manual，不创建计划、不启动任何软件。验收八个导航页（总览、活动、Agent、定时任务、软件、规则、关于与版本、设置）、活动详情返回、空登记状态、未接入计划和软件动作限制。
 
 桌面入口使用 Terminal=false，不弹出终端；原生进程标准输出和错误写入私有 DATA/logs/desktop.log。窗口没有出现时检查该日志，而不是反复启动隐藏实例。

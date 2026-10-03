@@ -21,6 +21,20 @@ class ResetMonitorTests(unittest.TestCase):
   self.target.rmdir();event=self.m.sample(1000)['events'][0];self.assertEqual(event['event_type'],'initial_absent');self.assertEqual(event['evidence_level'],'unknown');self.assertNotIn('last_present_at',event)
  def test_backward_clock(self):
   self.m.sample(1000);self.assertEqual(self.m.sample(900)['events'][0]['event_type'],'clock_rollback')
+ def test_backward_clock_and_missing_retains_both_facts(self):
+  self.m.sample(1000);self.target.rmdir();events=self.m.sample(900)['events']
+  self.assertEqual({e['event_type'] for e in events},{'clock_rollback','path_missing'})
+  missing=next(e for e in events if e['event_type']=='path_missing');self.assertEqual(missing['evidence_level'],'unknown');self.assertNotIn('last_present_at',missing)
+  self.assertEqual(self.m.sample(960)['events'],[]);self.assertEqual(len(self.m.export()),3)
+ def test_all_import_entry_points_reject_unbound_or_missing_data(self):
+  from dots_panel.reset_events import ResetStoreMixin
+  e=self.m.sample(1000)['events'][0]
+  missing=self.root/'missing';dummy=type('Dummy',(),{'directory':missing})()
+  with self.assertRaises((ValueError,FileNotFoundError)):ResetStoreMixin.reset_import(dummy,[e],expected_identity='panel-fixture')
+  self.assertFalse(missing.exists())
+  data=self.panel_fixture(binding=False);dummy.directory=data
+  with self.assertRaises(ValueError):ResetStoreMixin.reset_import(dummy,[e],expected_identity='panel-fixture')
+  db=sqlite3.connect(data/'db/panel.sqlite3');self.assertEqual(db.execute('SELECT count(*) FROM reset_events').fetchone()[0],0);db.close()
  def test_no_symlink_scan_or_recursive_content(self):
   secret=self.root/'secret';secret.mkdir();(secret/'payload').write_text('private');self.target.rmdir();self.target.symlink_to(secret,target_is_directory=True)
   self.assertEqual(inspect_path(self.target)['state'],'unreadable');self.assertEqual(self.m.sample(1000)['events'][0]['event_type'],'inspection_error')

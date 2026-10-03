@@ -7,7 +7,11 @@ import argparse
 from .outputs import TaskFolderOpener, task_output_summary, output_summary_text, output_main_text
 import base64
 from .doctor import doctor_rows
-from .notifications import NotificationState
+from .notifications import NotificationState, NotificationStorage
+from .companion_sources import skill_is_bundled, scheduler_is_bundled, installation_observations
+from .native_requirement_bookmarks import NativeRequirementBookmarks, NativeRequirementPopover, requirement_records, requirement_status, requirement_owner, requirement_work
+from .execution_config import config_label
+from .memory_processes import sort_process_rows
 from .native_notifications import NativeNotifications
 from .native_window import NativeWindow
 from .progress import task_progress, current_run, task_meaningful_updated, agent_observation
@@ -53,7 +57,7 @@ from .app import (Metrics, Store, ROOT, default_data_dir, agent_text, agent_work
 
 STATUS = {"waiting_user": "等待用户", "waiting_external": "等待外部结果", "paused": "已暂停记录", "awaiting_review": "等待验收", "running": "进行中", "succeeded": "已完成", "failed": "失败", "cancelled": "已取消", "pending": "待开始"}
 STATES = {"unknown": "历史状态未保留","planned": "计划", "in_progress": "进行中", "verified": "已验证"}
-PAGE_NAMES = {"overview": "概览", "conversations": "任务", "schedules": "自动化", "software": "软件", "rules": "规则", "about": "关于与版本", "settings": "设置"}
+PAGE_NAMES = {"overview": "概览", "conversations": "任务", "schedules": "自动化", "memory": "内存", "reset": "Reset", "software": "软件", "rules": "规则", "about": "关于与版本", "settings": "设置"}
 EN = {"设置": "Settings", "语言": "Language", "显示时区": "Display timezone", "应用时区": "Apply timezone", "默认北京时间；支持 IANA 时区。仅调整显示，不改变系统时间或任务调度。": "Beijing time by default; supports IANA timezones. Display only; system time and automation timing stay unchanged.", "设置保存在本机": "Settings are saved locally", "无效或不支持的 IANA 时区": "Invalid or unsupported IANA timezone", "未保存偏好；当前仅本次有效": "Preferences not saved; applied for this session only","已登记任务与工作记录；执行会话绑定情况见详情": "Registered tasks and work records; see details for execution-session bindings","关于与版本": "About & version", "↻ 刷新": "↻ Refresh", "每 5 秒 · 最近刷新": "Every 5s · Last refreshed", "尚未刷新": "Not refreshed yet","历史状态未保留": "Historical state unavailable", "recovered_summary": "Recovered summary","等待用户": "Waiting for user", "等待外部结果": "Waiting for external result", "已暂停记录": "Recorded as paused", "等待验收": "Awaiting review",
 
     "进行中 / 已完成 · {count} 个任务": "Running / done · {count} tasks",
@@ -289,22 +293,19 @@ def save_preferences(directory, language=None, timezone=None, reduced_motion=Non
 
 
 class ReadOnlyStore(Store):
-    def __init__(self, directory):
-        self.directory = Path(directory).expanduser().resolve()
-        self.path = self.directory / "db/panel.sqlite3"
-        if not self.path.is_file():
-            raise FileNotFoundError("No local task database; initialize it with the panel CLI first")
+    read_only = True
 
-    @contextmanager
-    def connect(self):
-        db = sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True, timeout=1)
-        try:
-            db.row_factory = sqlite3.Row
-            db.execute("PRAGMA query_only=ON")
-            with db:
-                yield db
-        finally:
-            db.close()
+    def __init__(self, directory):
+        requested = Path(directory).expanduser().absolute()
+        if any(path.is_symlink() for path in (requested, *requested.parents)):
+            raise ValueError("Runtime directory must not contain symlinks")
+        self.directory = requested
+        self.path = self.directory / "db/panel.sqlite3"
+        # Uses the same held-descriptor boundary with mode=ro, no initialization.
+        with self.connect() as db:
+            db.execute("SELECT name FROM sqlite_master LIMIT 1").fetchall()
+
+    connect = Store.connect
 
 
 def duration(seconds, language="zh"):
@@ -331,6 +332,13 @@ def size(value, language="zh"):
 STAGES = {"progress": ("工作进展", "Work progress"),"recovered_summary": ("恢复摘要", "Recovered summary"),"planned": ("规划", "Planning"), "implementation": ("实现", "Implementation"),
           "testing": ("测试", "Testing"), "review": ("审查", "Review"), "delivered": ("交付", "Delivery"),
           "artifact": ("成果归档", "Artifact archived"), "assignment": ("负责人变更", "Owner assignment"), "work_type": ("任务类型更新", "Task type update"), "state_changed": ("状态变更", "State changed"), "closeout": ("交付与验证", "Delivery & verification")}
+
+
+def memory_bytes(value, language='zh'):
+    if value is None:return 'Unknown' if language=='en' else '未知'
+    for unit,scale in (('GiB',2**30),('MiB',2**20),('KiB',2**10)):
+        if value>=scale:return f'{value/scale:.1f} {unit}'
+    return f'{value} B'
 
 
 def stage_label(stage, language="zh"):
@@ -506,7 +514,8 @@ def timeline_records(snapshot, task_id):
     for item in runs.values():
         if item.get("note"):
             records.append({"created": item["started"], "title": "启动说明：", "state": None, "message": item["note"], "kind": "note", "source_id": str(item["id"]), "key": "note:"+str(item["id"]), "task_id": task_id, "attribution": None, "run_id": item["id"]})
-    order = {"activity": 0, "event": 1, "note": 2}
+    records.extend(requirement_records(snapshot, {task_id}))
+    order = {"requirement": -1, "activity": 0, "event": 1, "note": 2}
     return sorted(records, key=lambda row: (-row["created"], order[row["kind"]], row["source_id"], row["message"]))
 
 
@@ -544,8 +553,10 @@ def collaboration_mode(task, language='zh'):
 
 def collaboration_actor(record, snapshot, language='zh'):
     attribution = record.get('attribution') or {}
+    if record.get('actor_type') == 'system' or record.get('role') == 'system' or record.get('kind') == 'system' or record.get('stage') in ('state_changed','assignment','requirement_state','requirement_owner'):
+        return {'known': False, 'label': 'System record' if language == 'en' else '系统记录', 'role': '', 'color': '#f0f1ed', 'agent': None, 'id': 'system'}
     if not attribution.get('agent_id'):
-        return {'known': False, 'label': 'Anonymous' if language == 'en' else '匿名',
+        return {'known': False, 'label': 'Historical author unknown' if language == 'en' else '历史作者未知',
                 'role': '', 'color': '#f3f4ef', 'agent': None, 'id': 'unattributed'}
     key = attribution.get('color_key', '')
     if len(key) != 8 or any(c not in '0123456789abcdefABCDEF' for c in key):
@@ -683,11 +694,11 @@ class Dashboard:
         self.motion = Motion(root, reduced=prefs.get("reduced_motion") is True)
         root.bind("<Destroy>", lambda event: self.motion.cancel_all() if event.widget is root else None, add="+")
         self.snapshot, self.metric_values, self.rows = {}, {}, []
-        self.notification_state = NotificationState()
+        self.notification_state = NotificationState(storage=NotificationStorage(store.directory))
         self.notifications = None
         root.bind("<Destroy>", lambda event: self.notifications.close() if event.widget is root and self.notifications is not None else None, add="+")
         self.page, self.selected_task, self.timer = "overview", None, None
-        self.workspace_filter = "all"
+        self.workspace_filter = "unfinished"
         self.search_query = tk.StringVar(root, value="")
         self.scroll_positions = {}
         self.scroll_dragging = False
@@ -757,6 +768,9 @@ class Dashboard:
         return canvas, inner
 
     def build_shell(self):
+        if getattr(self,'requirement_popover',None) is not None:self.requirement_popover.close(restore_focus=False)
+        if getattr(self,'requirement_bookmarks',None) is not None:
+            self.requirement_bookmarks.close();self.requirement_bookmarks=None
         if getattr(self, "notifications", None) is not None:
             self.notifications.close()
             self.notifications = None
@@ -777,7 +791,9 @@ class Dashboard:
             button.configure(anchor="w", padx=18, bg="#eaf2e9", fg=self.fg)
             button.pack(fill="x", padx=12, pady=4)
             self.nav_buttons[page] = button
-        self.label(sidebar, "v" + VERSION + "  ·  Ctrl 1–7", 13, self.muted).pack(side="bottom", anchor="w", padx=22, pady=22)
+            button.bind('<Enter>',lambda event,b=button,p=page:b.configure(bg=self.tint if p==self.page else '#e3e8e1'))
+            button.bind('<Leave>',lambda event,b=button,p=page:b.configure(bg=self.tint if p==self.page else '#eaf2e9'))
+        self.label(sidebar, "v" + VERSION + "  ·  Ctrl 1–9", 13, self.muted).pack(side="bottom", anchor="w", padx=22, pady=22)
         if getattr(self, "window_state", None) is not None:
             window_hint = self.label(sidebar, "", 11, self.muted, wrap=150, raw=True)
             window_control = self.button(sidebar, "", self.window_state.toggle)
@@ -857,6 +873,7 @@ class Dashboard:
         self.fit_card(timezone_card, timezone_box)
 
         refresh_backup = self.backup_card(area)
+        self.render_recovered_evidence(area)
 
         motion_card, motion_box = self.card(area, 150)
         motion_card.pack(fill="x", pady=(0, 14))
@@ -878,6 +895,22 @@ class Dashboard:
             if info!=last_region[0]:region_label.configure(text=info);last_region[0]=info
             refresh_backup()
         self.background_refresh=refresh_settings
+
+    def render_recovered_evidence(self, parent):
+        en=self.language=='en';holder=self.tk.Frame(parent,bg=self.bg);holder.pack(fill='x',pady=(15,0));body=self.tk.Frame(holder,bg=self.bg);labels=self.keyed_labels(body)
+        def toggle():
+            self.recovered_evidence_open=not getattr(self,'recovered_evidence_open',False);refresh()
+        button=self.filter_chip(holder,'',toggle);button.pack(anchor='w')
+        def refresh():
+            data=self.snapshot.get('recovered_evidence') or {};events=data.get('events') or []
+            self.patch_caption(button,('Evidence-supplemented history' if en else '证据补录历史')+' · '+str(len(events))+(' ⌃' if getattr(self,'recovered_evidence_open',False) else ' ⌄'))
+            if not getattr(self,'recovered_evidence_open',False):body.pack_forget();return
+            body.pack(fill='x',pady=8)
+            rows=[('boundary','The original byte-level baseline contains 15 tasks. Later facts are evidence supplements, not a complete restoration of original records. Unknown original task/run mappings remain unknown; assistant reports are not user acceptance.' if en else '原字节基线保留 15 个任务。后续事实是证据补录，不代表原记录完整恢复。未知原 task/run 归属保持未知；助手报告不等于用户验收。'),('cutoff',('Baseline cutoff: ' if en else '基线截止：')+str(data.get('baseline_cutoff_utc') or 'unknown'))]
+            for event in events:
+                key=str(event.get('evidence_id'));rows.append((key,' · '.join(str(event.get(field) or 'unknown') for field in ('source_observed_at_utc','source_observed_at_beijing','topic'))+' · '+({'user_instruction':('用户指令','User instruction'),'assistant_report':('助手报告（非用户验收）','Assistant report (not acceptance)')}.get(event.get('evidence_level'),(str(event.get('evidence_level') or '未知'),str(event.get('evidence_level') or 'Unknown')))[en])+'\n'+str(event.get('fact_summary') or '')+'\n'+('Remaining unknown: ' if en else '仍未知：')+str(event.get('remaining_unknown') or 'unknown')+'\n'+('Original task / run: ' if en else '原任务 / 运行：')+str(event.get('known_original_task_id') or 'unknown')+' / '+str(event.get('known_original_run_id') or 'unknown')))
+            labels(rows)
+        refresh();self.live_updates.append(refresh)
 
     def backup_card(self, parent, compact=False):
         """Patch only changed backup labels; keep the page, focus and scroll intact."""
@@ -1064,6 +1097,8 @@ class Dashboard:
             self.notifications.mark_read(page)
 
     def go_back(self, event=None):
+        if getattr(self,'requirement_popover',None) is not None:
+            self.requirement_popover.close();return 'break'
         if self.page == "conversations" and self.selected_task:
             self.selected_task, self.detail_scroll = None, 0.0
             self.render_page()
@@ -1073,7 +1108,7 @@ class Dashboard:
             self.root.after_cancel(self.timer)
             self.timer = None
         try:
-            self.snapshot = self.store.snapshot()
+            self.snapshot = self.store.snapshot(selected_task_id=self.selected_task) if getattr(self,'selected_task',None) else self.store.snapshot()
             notification_result = self.notification_state.update(self.snapshot) if hasattr(self, "notification_state") else None
             self.metric_values = self.metrics.collect()
             self.rows = task_rows(self.snapshot, time.time(), self.language)
@@ -1141,6 +1176,7 @@ class Dashboard:
         self.health.configure(text=message, fg="#9c611c" if self.read_error or self.preference_error else self.accent)
 
     def render_page(self):
+        if getattr(self,'requirement_popover',None) is not None:self.requirement_popover.close(restore_focus=False)
         self.motion.cancel_all()
         self.pending_conversation_anchor = None
         anchor_key=(self.page,self.selected_task,getattr(self,'detail_tab','timeline'),json.dumps(getattr(self,'conversation_filters',{}),sort_keys=True),getattr(self,'conversation_offset',0))
@@ -1166,6 +1202,8 @@ class Dashboard:
             self.detail_scroll = self.timeline.yview()[0]
         self.cancel_viewport_restore()
         self.live_updates = []
+        if getattr(self,'requirement_bookmarks',None) is not None:self.requirement_bookmarks.close()
+        self.requirement_bookmarks = None
         self.background_refresh = None
         for widget in self.content.winfo_children():
             widget.destroy()
@@ -1182,7 +1220,7 @@ class Dashboard:
         self.subtitle.configure(text=self.t(subtitles.get(self.page, "")))
         if self.page == 'schedules':self.subtitle.pack_forget()
         for name, button in self.nav_buttons.items():
-            button.configure(bg=self.tint if name == self.page else "#eaf2e9", fg=self.accent if name == self.page else self.fg)
+            button.configure(bg=self.tint if name == self.page else "#eaf2e9", activebackground=self.tint if name == self.page else "#e3e8e1", fg=self.accent if name == self.page else self.fg)
         if self.page == "overview":
             self.render_overview()
         elif self.page == "conversations":
@@ -1192,6 +1230,10 @@ class Dashboard:
                 self.render_conversation_list(old_selection)
         elif self.page == "schedules":
             self.render_schedules()
+        elif self.page == "reset":
+            self.render_reset()
+        elif self.page == "memory":
+            self.render_memory()
         elif self.page == "software":
             self.render_software()
         elif self.page == "rules":
@@ -1232,6 +1274,7 @@ class Dashboard:
         canvas.bind("<Leave>", lambda event: feedback(False))
         canvas.bind("<Destroy>", lambda event: self.motion.cancel(canvas), add="+")
         canvas.caption_text=text
+        canvas.caption_auto_width=True;canvas.caption_shape=shape
         canvas.caption_item=canvas.create_text(width/2, 17, text=text, fill="white" if selected else self.muted, font=(self.font, -14, "bold" if selected else "normal"))
         canvas.bind("<Button-1>", lambda event: command())
         canvas.bind("<Return>", lambda event: command())
@@ -1243,6 +1286,12 @@ class Dashboard:
         widget.caption_text=text
         item=getattr(widget,'caption_item',None)
         if item is not None:
+            if getattr(widget,'caption_auto_width',False) is True:
+                import tkinter.font as font
+                width=font.Font(root=self.root,family=self.font,size=-14).measure(text)+26
+                widget.configure(width=width);widget.coords(item,width/2,17)
+                r=17;h=34
+                widget.coords(widget.caption_shape,r,0,width-r,0,width,0,width,r,width,h-r,width,h,width-r,h,r,h,0,h,0,h-r,0,r,0,0)
             widget.itemconfigure(item,text=text)
         else:widget.configure(text=text)
 
@@ -1274,6 +1323,12 @@ class Dashboard:
                     actions=self.tk.Frame(box,bg=self.panel);actions.pack(fill='x',pady=(5,0))
                     cards[key]={'box':box,'details':self.keyed_labels(details),'actions':actions,'buttons':{},'callbacks':{}}
                 item=cards[key];old=previous.get(key,{})
+                if value.get('bundled') and not item.get('badge'):
+                    item['badge']=self.attach_bundled_badge(item['box'])
+                elif not value.get('bundled') and item.get('badge'):
+                    item['badge'].grid_remove()
+                elif value.get('bundled') and item.get('badge'):
+                    item['badge'].grid()
                 for field,widget in (('title',item['box'].title_label),('summary',item['box'].summary_label),('status',item['box'].status_label)):
                     if field in old and old.get(field)!=value.get(field) and widget is not None:
                         if bounded:item['box'].set_caption(field,value.get(field,''))
@@ -1585,9 +1640,10 @@ class Dashboard:
     def scroll_key(self, event):
         if event.widget.winfo_class() in ("Entry", "TEntry", "TCombobox"):
             return
-        target = getattr(self, "page_scroll", None)
+        preview=getattr(self,'requirement_popover',None)
+        target=preview.canvas if preview is not None and preview.owns(event.widget) else getattr(self, 'page_scroll',None)
         if target is not None and target.winfo_exists():
-            self.cancel_viewport_restore(target)
+            if preview is None or target is not preview.canvas:self.cancel_viewport_restore(target)
             if event.keysym == "End":
                 target.yview_moveto(1.0)
             elif event.keysym == "Home":
@@ -1599,7 +1655,7 @@ class Dashboard:
     def view_signature(self):
         now = time.time()
         fresh = tuple(sorted((agent['id'],agent.get('status')) for agent in self.snapshot.get('agents',[]) if agent_observation(agent,self.snapshot,now)['recent']))
-        fields={'software':('software',),'schedules':('schedules',),'rules':('rules',),'about':('about',),'settings':('exit_region','backup')}.get(self.page)
+        fields={'reset':('reset_events','reset_monitor_status'),'memory':(),'software':('software',),'schedules':('schedules',),'rules':('rules',),'about':('about',),'settings':('exit_region','backup','recovered_evidence')}.get(self.page)
         visible={key:self.snapshot.get(key) for key in fields} if fields else self.snapshot
         return (self.page,self.selected_task,self.language,self.workspace_filter,self.search_query.get(),fresh if fields is None else (),display_signature(visible))
 
@@ -1698,6 +1754,10 @@ class Dashboard:
         return body
 
     def mousewheel(self, event):
+        preview=getattr(self,'requirement_popover',None)
+        if preview is not None and preview.owns(event.widget):
+            units=-1 if getattr(event,'num',0)==4 else 1 if getattr(event,'num',0)==5 else (-1 if event.delta>0 else 1)
+            preview.canvas.yview_scroll(units*2,'units');return 'break'
         if hasattr(self, "page_scroll") and self.page_scroll.winfo_exists():
             self.cancel_viewport_restore()
             units = -1 if getattr(event, "num", 0) == 4 else 1 if getattr(event, "num", 0) == 5 else (-1 if event.delta > 0 else 1)
@@ -2079,6 +2139,7 @@ class Dashboard:
             self.render_task_files(area, files)
             return
         self.render_conversation_filters(area,task)
+        self.render_requirement_list(area)
         stream=self.tk.Frame(area,bg=self.bg);stream.pack(fill='x')
         notice=self.label(area,'',12,self.muted,raw=True,wrap=800)
         paging=self.tk.Frame(area,bg=self.bg);paging.pack(fill='x',pady=(6,10))
@@ -2099,6 +2160,11 @@ class Dashboard:
             except (AttributeError,OSError,sqlite3.Error,ValueError):
                 rows=collaboration_records(self.snapshot,self.selected_task,filters)
                 data={'rows':rows,'total':len(rows),'offset':0,'limit':100,'has_more':False,'error':True}
+            latest={card['id']:card for card in self.snapshot.get('requirements',[])}
+            for record in data['rows']:
+                if record.get('kind')=='requirement':
+                    card=latest.get(record.get('requirement_id') or record.get('source_id'))
+                    if card:record.update(requirement=card,message=card['summary'])
             data['rows']=sorted(data['rows'],key=lambda r:(r['created'],r['kind'],r['source_id']))
             return data
         def apply(data,follow=False):
@@ -2108,6 +2174,8 @@ class Dashboard:
             previous_widget=None
             for record,key in zip(data['rows'],wanted):
                 signature=display_signature(record)
+                if key in mounted and record.get('kind')=='requirement' and hasattr(mounted[key],'refresh_requirement'):
+                    mounted[key].refresh_requirement(record.get('requirement') or {});models[key]=signature
                 if key not in mounted or models.get(key)!=signature:
                     if key in mounted:mounted.pop(key).destroy()
                     mounted[key]=self.conversation_message(stream,record,task);models[key]=signature
@@ -2150,12 +2218,26 @@ class Dashboard:
             at_bottom=not mounted or (hasattr(self,'page_scroll') and self.page_scroll.yview()[1]>=.98)
             if at_bottom:apply(data,True)
             else:
+                # Refresh current facts in mounted historical cards immediately; preserve their controls and anchor.
+                anchor=self.capture_requirement_anchor()
+                latest_requirements={q['id']:q for q in self.snapshot.get('requirements',[])}
+                for key,widget in mounted.items():
+                    if key.startswith('requirement:') and hasattr(widget,'refresh_requirement'):
+                        card=latest_requirements.get(key[len('requirement:'):])
+                        if card is not None:widget.refresh_requirement(card)
+                self.restore_requirement_anchor(anchor)
                 pending['data']=data;count=sum((r.get('key') or r['kind']+':'+r['source_id']) not in mounted for r in data['rows'])
                 new_items.configure(text=(f'{count} new records ↓' if en else f'{count} 条新记录 ↓') if count else ('Records updated ↓' if en else '记录已更新 ↓'))
                 new_items.place(relx=1,rely=1,anchor='se',x=-26,y=-12)
         initial=read_records();last_query['signature']=display_signature(initial);apply(initial)
+        self.requirement_bookmarks=NativeRequirementBookmarks(self)
+        self.live_updates.append(self.requirement_bookmarks.update)
         if hasattr(self,'page_scroll'):
-            self.page_scroll.follow_tail=False
+            first_visit=self.viewport_key() not in getattr(self,'scroll_positions',{}) and not getattr(self,'pending_conversation_anchor',None) and getattr(self,'conversation_offset',0)==0 and any(q.get('task_id') in collaboration_scope(self.snapshot,self.selected_task) for q in self.snapshot.get('requirements',[]))
+            self.page_scroll.follow_tail=first_visit
+            if first_visit and hasattr(self.page_scroll,'follow_end'):
+                canvas=self.page_scroll
+                self.root.after(80,lambda:canvas.follow_end() if canvas is self.page_scroll and canvas.winfo_exists() else None)
             def scroll_update(first,last):
                 self.update_conversation_header(first,last)
                 if float(last)>=.98 and pending['data'] is not None and pending['job'] is None:
@@ -2169,6 +2251,7 @@ class Dashboard:
 
 
     def conversation_message(self,area,record,task):
+        if record.get('kind')=='requirement':return self.requirement_message(area,record)
         actor = collaboration_actor(record,self.snapshot,self.language)
         surface, inner = self.card(area, 150, fill=actor['color'])
         heading = self.tk.Frame(inner,bg=actor['color']);heading.pack(fill='x')
@@ -2190,6 +2273,7 @@ class Dashboard:
         if task.get('activity_kind')=='project':
             title += ' · '+next((t['name'] for t in self.snapshot.get('tasks',[]) if t['id']==record.get('task_id')),record.get('task_id',''))
         self.label(inner,title,12,self.muted,raw=True).pack(anchor='w',pady=(8,6))
+        self.label(inner,config_label((record.get('attribution') or {}).get('execution_config'),self.language),11,self.muted,raw=True).pack(anchor='w')
         paragraph = self.detail_paragraph(inner, record["message"])
         pending = {"id": None}
         def fit_paragraph(event=None, paragraph=paragraph, frame=inner, card=surface, pending=pending):
@@ -2415,7 +2499,7 @@ class Dashboard:
             parent.reflow_cards()
         else:
             surface.pack(fill="x", pady=(0, 8))
-        box.surface=surface
+        box.surface=surface;box.bounded_title=bounded
         box.status_label=None;box.participant_group=None
         if participants is not None:
             top=self.tk.Frame(box,bg=self.panel);top.pack(fill='x',pady=(0,8))
@@ -2461,6 +2545,7 @@ class Dashboard:
             def walk(widget):
                 for child in widget.winfo_children():
                     if isinstance(child, self.tk.Label):
+                        if getattr(child,'own_title_wrap',False):continue
                         child.configure(wraplength=max(40, width-68) if child.master is not box else width)
                     else:
                         walk(child)
@@ -2473,8 +2558,9 @@ class Dashboard:
                 for field,widget,pixels,lines in [('title',box.title_label,20,2),('status',box.status_label,12,1),('summary',box.summary_label,14,2)]:
                     measure=font.Font(root=self.root,family=self.font,size=-pixels,weight='bold' if field=='title' else 'normal').measure
                     value=source[field]
+                    item_width=max(20,widget.winfo_width()) if getattr(widget,'own_title_wrap',False) else width
                     if field=='summary':value='\n'.join(bounded_card_lines(line,width,measure,1) for line in value.splitlines()[:2])
-                    else:value=bounded_card_lines(value,width,measure,lines)
+                    else:value=bounded_card_lines(value,item_width,measure,lines)
                     if widget.cget('text')!=value:widget.configure(text=value,wraplength=0)
                 if surface.auto_fit:surface.configure(height=max(244,box.winfo_reqheight()+48))
             def set_caption(field,value):source[field]=value;fit_bounded()
@@ -2561,8 +2647,189 @@ class Dashboard:
                     if opened:details+=technical
                 for field,label,value in [('project','Project' if en else '项目',record.get('project')),('source','Source' if en else '来源',record.get('source')),('state','Registered state' if en else '登记状态',record.get('state')),('next','Planned time (unverified)' if en else '登记计划时间（未核验）',self.stamp(record.get('next_run')) if record.get('next_run') else '—'),('updated','Last recorded update' if en else '最近登记更新',self.stamp(record.get('updated')) if record.get('updated') else '—')]:details.append((field,label+': '+str(value or '—')))
                 details.append(('boundary','Registration does not create, start or resume a scheduler' if en else '登记不会创建、启动或恢复任何定时器'))
-            return {'title':record['name'],'summary':timing,'status':state,'details':details,'actions':actions}
+            return {'bundled':scheduler_is_bundled(record,installation_observations(self.snapshot)),'title':record['name'],'summary':timing,'status':state,'details':details,'actions':actions}
         self.keyed_registry(grid_holder,lambda:self.snapshot.get('schedules',[]),model,minimum=370,maximum=2,bounded=True)
+
+    def bundled_badge(self, parent):
+        caption='◆ Panel bundled' if self.language=='en' else '◆ Panel 配套'
+        canvas=self.tk.Canvas(parent,width=122 if self.language=='en' else 112,height=28,bg=parent.cget('bg'),highlightthickness=0,bd=0,takefocus=0)
+        self.round_shape(canvas,0,0,122 if self.language=='en' else 112,28,'#d5ecdd',radius=10)
+        canvas.create_text(9,14,text=caption,anchor='w',font=(self.font,-12,'bold'),fill='#24543c')
+        return canvas
+
+    def attach_bundled_badge(self, box):
+        previous=box.title_label;caption=previous.cget('text');previous.destroy()
+        heading=self.tk.Frame(box,bg=self.panel);heading.pack(fill='x',before=box.summary_label)
+        heading.columnconfigure(0,weight=1)
+        # Tk cannot reparent a sibling into a later frame: recreate only this non-interactive label in the real title container.
+        title=self.label(heading,caption,20,self.fg,True,raw=True);box.title_label=title
+        if getattr(box,'bounded_title',False):title.configure(height=2,anchor='nw')
+        title.grid(row=0,column=0,sticky='ew',padx=(0,8));title.own_title_wrap=True
+        title.bind('<Configure>',lambda event:title.configure(wraplength=max(20,event.width)),add='+')
+        badge=self.bundled_badge(heading);badge.grid(row=0,column=1,sticky='ne')
+        return badge
+
+    def capture_requirement_anchor(self):
+        canvas=getattr(self,'page_scroll',None)
+        if canvas is None:return None
+        top=canvas.canvasy(0)
+        for key,widget in getattr(self,'conversation_anchors',{}).items():
+            if widget.winfo_exists() and widget.winfo_y()+widget.winfo_height()>top:return (key,widget.winfo_y()-top)
+        return None
+
+    def restore_requirement_anchor(self, anchor):
+        if not anchor:return
+        canvas=self.page_scroll
+        def restore():
+            widget=getattr(self,'conversation_anchors',{}).get(anchor[0])
+            if canvas is self.page_scroll and widget is not None and widget.winfo_exists():
+                region=canvas.bbox('all')
+                if region and region[3]:canvas.yview_moveto(max(0,widget.winfo_y()-anchor[1])/region[3])
+        self.root.after_idle(restore)
+
+    def requirement_message(self, area, record):
+        en=self.language=='en';card=record.get('requirement') or {};key=card.get('id') or record.get('requirement_id') or record.get('source_id')
+        surface,inner=self.card(area,180,fill='#edf5e9')
+        head=self.tk.Frame(inner,bg='#edf5e9');head.pack(fill='x')
+        self.label(head,'◆ Requirement' if en else '◆ 需求',13,'#42643d',True,raw=True).pack(side='left')
+        self.label(head,self.stamp(record.get('created')),11,self.muted,raw=True).pack(side='right')
+        self.label(inner,card.get('summary') or record.get('message',''),17,self.fg,True,raw=True,wrap=800).pack(anchor='w',fill='x',pady=(8,5))
+        facts=self.label(inner,'',13,self.accent,raw=True,wrap=800);facts.pack(anchor='w',fill='x')
+        work=self.label(inner,'',12,self.muted,raw=True,wrap=800);work.pack(anchor='w',fill='x',pady=(5,3))
+        config=self.label(inner,'',11,self.muted,raw=True,wrap=800);config.pack(anchor='w',fill='x')
+        history=self.tk.Frame(inner,bg='#edf5e9');update_history=self.keyed_labels(history)
+        if not hasattr(self,'expanded_requirements'):self.expanded_requirements=set()
+        state={'card':card}
+        def toggle():
+            if key in self.expanded_requirements:self.expanded_requirements.remove(key)
+            else:self.expanded_requirements.add(key)
+            refresh(state['card'])
+        button=self.filter_chip(inner,'',toggle);button.pack(anchor='w',pady=(7,0))
+        def refresh(value):
+            state['card']=value
+            facts.configure(text=requirement_status(value.get('status'),self.language)+' · '+requirement_owner(value,self.language))
+            work.configure(text=('Current work: ' if en else '当前执行：')+(requirement_work(value) or ('Not recorded' if en else '尚未登记')))
+            owner=value.get('owner') or {};config.configure(text=config_label(owner,self.language))
+            expanded=key in self.expanded_requirements
+            self.patch_caption(button,('History ⌃' if en else '历史 ⌃') if expanded else ('History ⌄' if en else '历史 ⌄'))
+            if expanded:
+                history.pack(fill='x',pady=(6,0));lines=[]
+                for event in value.get('history',[]):
+                    content=requirement_status(event.get('status'),self.language) if event.get('kind') in ('receipt','state') else requirement_owner({'owner':event.get('owner')},self.language) if event.get('kind')=='owner' else str(event.get('link_kind',''))+' · '+str(event.get('target_id',''))
+                    lines.append((str(event.get('id')),self.stamp(event.get('observed_at'))+' · '+content+' · '+str(event.get('evidence') or '')))
+                update_history(lines)
+            else:history.pack_forget()
+            self.root.after_idle(lambda:surface.configure(height=inner.winfo_reqheight()+40) if surface.winfo_exists() else None)
+        inner.bind('<Configure>',lambda event:[label.configure(wraplength=max(40,event.width)) for label in (facts,work,config)],add='+')
+        refresh(card);surface.refresh_requirement=refresh;surface.requirement_button=button
+        return surface
+
+    def render_requirement_list(self, area):
+        en=self.language=='en';holder=self.tk.Frame(area,bg=self.bg);holder.pack(fill='x',pady=(0,8));body=self.tk.Frame(holder,bg=self.bg);buttons={}
+        def toggle():
+            self.requirement_list_open=not getattr(self,'requirement_list_open',False);refresh()
+        toggle_button=self.filter_chip(holder,'',toggle);toggle_button.pack(anchor='w')
+        def refresh():
+            ids=collaboration_scope(self.snapshot,self.selected_task);cards=[q for q in self.snapshot.get('requirements',[]) if q.get('task_id') in ids]
+            self.patch_caption(toggle_button,('All requirements' if en else '全部需求')+' · '+str(len(cards))+(' ⌃' if getattr(self,'requirement_list_open',False) else ' ⌄'))
+            if not getattr(self,'requirement_list_open',False):body.pack_forget();return
+            body.pack(fill='x',pady=(5,0));wanted={q['id'] for q in cards}
+            for key in list(buttons):
+                if key not in wanted:buttons.pop(key).destroy()
+            for card in cards:
+                key=card['id'];caption=card['summary']+' · '+requirement_status(card.get('status'),self.language)
+                if key not in buttons:
+                    button=self.button(body,caption,lambda key=key:self.try_open_requirement(key));button.pack(anchor='w',fill='x',pady=3);buttons[key]=button
+                else:self.patch_caption(buttons[key],caption)
+        refresh();self.live_updates.append(refresh)
+
+    def try_open_requirement(self, requirement_id):
+        try:return self.open_requirement(requirement_id,preserve_view=True)
+        except Exception:
+            error=getattr(self,'requirement_navigation_error',None)
+            if error is None or not error.winfo_exists():
+                error=self.label(self.content,'',12,'#8c491b',raw=True,bg='#fff0d5',wrap=500);self.requirement_navigation_error=error
+            error.configure(text='Requirement could not be shown; unread state retained. Please retry.' if self.language=='en' else '需求未能显示，未读状态已保留；请重试。')
+            error.place(relx=.5,rely=1,anchor='s',y=-10)
+            return False
+
+    def open_requirement(self, requirement_id, preserve_view=False):
+        card=next((q for q in self.snapshot.get('requirements',[]) if q['id']==requirement_id),None)
+        if card is None:raise ValueError('Requirement is not available in this snapshot')
+        # Only notification navigation to another activity may replace the underlying page.
+        if not preserve_view and (self.page!='conversations' or self.selected_task!=card['task_id'] or not any(t['id']==card['task_id'] for t in self.snapshot.get('tasks',[]))):
+            precise=self.store.snapshot(selected_task_id=card['task_id'])
+            if not any(t['id']==card['task_id'] for t in precise.get('tasks',[])):raise ValueError('Requirement activity is not readable')
+            card=next((q for q in precise.get('requirements',[]) if q['id']==requirement_id),None)
+            if card is None:raise ValueError('Requirement is not readable in the selected activity')
+            self.snapshot=precise;self.rows=task_rows(precise,time.time(),self.language)
+            self.page='conversations';self.selected_task=card['task_id'];self.detail_tab='timeline';self.render_page()
+        preview=getattr(self,'requirement_popover',None)
+        if preview is None or not preview.frame.winfo_exists():
+            preview=NativeRequirementPopover(self);self.requirement_popover=preview;self.live_updates.append(preview.update)
+        if preview.show(card) is not True:raise ValueError('Requirement preview did not become visible')
+        error=getattr(self,'requirement_navigation_error',None)
+        if error is not None and error.winfo_exists():error.place_forget()
+        if getattr(self,'notifications',None) is not None:self.notifications.mark_read('conversations',card['task_id'],requirement_id)
+        return True
+
+    def render_reset(self):
+        area=self.scroll_area();en=self.language=='en'
+        heading=self.tk.Frame(area,bg=self.bg);heading.pack(fill='x',pady=(0,12));heading.columnconfigure(0,weight=1)
+        self.label(heading,'Reset observer' if en else '重置观察器',18,self.fg,True,raw=True).grid(row=0,column=0,sticky='w')
+        self.bundled_badge(heading).grid(row=0,column=1,sticky='e')
+        self.label(area,'UTC reference and Beijing time show the same instant, not an official OpenAI local timezone. Observes selected fixed components only. Local 60-second sampling is not a platform minutely schedule or a persistence guarantee; planned time is not actual observation.' if en else 'UTC 参考时间与北京时间表示同一时刻，不是 OpenAI 官方当地时间。仅观察明确选择的固定组件。每 60 秒本地采样不等于平台每分钟计划，不保证进程常驻；计划时间不等于实际观察。',13,self.muted,raw=True,wrap=800).pack(fill='x',pady=(0,12))
+        status=self.label(area,'',14,self.accent,raw=True);status.pack(anchor='w',pady=(0,12))
+        records=self.tk.Frame(area,bg=self.bg);records.pack(fill='x');rows={}
+        empty=self.label(records,'No reset observation events recorded; this does not prove that no reset occurred.' if en else '尚无重置观察事件；这不证明从未发生重置。',14,self.muted,raw=True,wrap=800)
+        event_names={'historical_estimate':('历史估算','Historical estimate'),'missing':('组件缺失','Component missing'),'identity_changed':('组件身份变化','Component identity changed'),'recovery':('恢复观察','Recovery observed'),'gap':('观察缺口','Observation gap'),'monitor_gap':('观察缺口','Observation gap'),'present':('组件存在','Component present'),'baseline_present':('基线存在','Baseline present'),'initial_absent':('首次观察即缺失','Initially absent'),'path_missing':('组件缺失','Component missing'),'path_reappeared':('重新出现','Component reappeared'),'observation_gap':('观察缺口','Observation gap'),'clock_rollback':('时钟回退','Clock rollback'),'inspection_error':('检查失败','Inspection error')}
+        field_names={'observed_at_utc':('UTC 观察时间','Observed at · UTC'),'observed_at_beijing':('北京观察时间','Observed at · Beijing'),'last_present_at_utc':('最后存在 · UTC','Last present · UTC'),'first_missing_at_utc':('首次缺失 · UTC','First missing · UTC'),'evidence_level':('证据等级','Evidence level'),'source_kind':('来源类别','Source kind')}
+        def refresh():
+            current=self.snapshot.get('reset_monitor_status','unknown');status.configure(text=('Observer status: ' if en else '观察器状态：')+(current.get('status','unknown') if isinstance(current,dict) else str(current)))
+            events=self.snapshot.get('reset_events',[]);wanted={str(row.get('event_id',row.get('id',index))) for index,row in enumerate(events)}
+            for key in list(rows):
+                if key not in wanted:rows.pop(key)[0].destroy()
+            for index,event in enumerate(events):
+                key=str(event.get('event_id',event.get('id',index)))
+                if key not in rows:
+                    box=self.tk.Frame(records,bg=self.panel,padx=14,pady=12);box.pack(fill='x',pady=(0,10));rows[key]=(box,self.keyed_labels(box))
+                labels=[('event',event_names.get(event.get('event_type'),(event.get('event_type','未知'),event.get('event_type','Unknown')))[en]+' · '+str(event.get('summary','')))]
+                labels.extend((field,field_names[field][en]+': '+({'estimated':'估算','observed':'已观察','unknown':'未知'}.get(event.get(field),str(event.get(field) or '未知')) if field=='evidence_level' and not en else str(event.get(field) or ('Unknown' if en else '未知')))) for field in ('observed_at_utc','observed_at_beijing','last_present_at_utc','first_missing_at_utc','evidence_level','source_kind'))
+                rows[key][1](labels)
+            if events:empty.pack_forget()
+            else:empty.pack(anchor='w')
+        refresh();self.background_refresh=refresh;self.live_updates.append(refresh)
+
+    def render_memory(self):
+        area=self.scroll_area();en=self.language=='en'
+        self.label(area,'System, container and process observations are separate; process RSS is not additive.' if en else '系统、容器与进程是独立观测口径；不累加进程 RSS。',14,self.muted,raw=True,wrap=800).pack(anchor='w',pady=(0,12))
+        facts=self.tk.Frame(area,bg=self.bg);facts.pack(fill='x');update_facts=self.keyed_labels(facts)
+        toolbar=self.tk.Frame(area,bg=self.bg);toolbar.pack(fill='x',pady=10)
+        sort=getattr(self,'memory_sort','rss_desc');sort_buttons={}
+        for value,label in [('rss_desc','RSS ↓'),('rss_asc','RSS ↑'),('pid','PID'),('name','Name' if en else '进程名')]:
+            def choose(value=value):
+                self.memory_sort=value
+                for key,control in sort_buttons.items():control.configure(bg=self.tint if key==value else '#e9eee8',fg=self.accent if key==value else self.muted,relief='sunken' if key==value else 'flat')
+                refresh()
+            control=self.tk.Button(toolbar,text=label,command=choose,font=(self.font,-13,'bold'),bd=1,relief='sunken' if value==sort else 'flat',bg=self.tint if value==sort else '#e9eee8',fg=self.accent if value==sort else self.muted,padx=10,pady=6,takefocus=1)
+            control.pack(side='left',padx=(0,7));sort_buttons[value]=control
+        tree=self.ttk.Treeview(area,columns=('pid','name','rss','task'),show='headings',height=16)
+        for key,title,width in [('pid','PID',90),('name','Name' if en else '进程名',260),('rss','RSS',130),('task','Task attribution' if en else '任务归属',170)]:tree.heading(key,text=title);tree.column(key,width=width,stretch=True)
+        tree.pack(fill='both',expand=True)
+        self.label(area,'Scope: sampler_visible_processes · /proc numeric directories, status Name/VmRSS only. No process controls.' if en else '范围：采样器可见进程 · 仅 /proc 数字目录 status 的 Name/VmRSS，不提供进程控制。',12,self.muted,raw=True,wrap=800).pack(anchor='w',pady=9)
+        def refresh():
+            m=self.metric_values;p=m.get('process_memory') or {};status=p.get('status','unavailable');quota=m.get('memory_quota');limit=('Unlimited' if en else '无限制') if m.get('memory_quota_state')=='unlimited' else memory_bytes(quota,self.language)
+            update_facts([('system',('System total / available: ' if en else '系统总量 / 可用：')+memory_bytes(m.get('memory_total'),self.language)+' / '+memory_bytes(m.get('memory_available'),self.language)),('container',('cgroup current / limit: ' if en else 'cgroup 当前 / 上限：')+memory_bytes(m.get('cgroup_memory_current'),self.language)+' / '+limit),('sample',('Process sample: ' if en else '进程采样：')+status+' · '+self.stamp(p.get('sampled_at'))),('attempt',('Last attempted: ' if en else '最近尝试：')+self.stamp(p.get('attempted_at'))),('counts',('Visible / readable / unreadable / exited: ' if en else '可见 / 可读 / 不可读 / 已退出：')+' / '.join(str(p.get(key,'—')) for key in ('visible_count','readable_count','unreadable_count','exited_count'))),('error',p.get('error') or '')])
+            rows=sort_process_rows(p.get('rows',[]),getattr(self,'memory_sort','rss_desc'));wanted={str(row['pid']) for row in rows}
+            for iid in tree.get_children():
+                if iid not in wanted:tree.delete(iid)
+            for index,row in enumerate(rows):
+                iid=str(row['pid']);values=(iid,row['name'],memory_bytes(row['rss_bytes'],self.language),'Unknown' if en else '未知')
+                if tree.exists(iid):
+                    if tuple(tree.item(iid,'values'))!=values:tree.item(iid,values=values)
+                    tree.move(iid,'',index)
+                else:tree.insert('',index,iid=iid,values=values)
+        refresh();self.background_refresh=refresh;self.live_updates.append(refresh)
 
     def render_software(self):
         area=self.scroll_area();en=self.language=='en'
@@ -2661,7 +2928,7 @@ class Dashboard:
                         import webbrowser
                         webbrowser.open(url)
                     actions.append(('manage','Manage ↗' if en else '管理 ↗',open_skill))
-            return {'title':agent_text(item,'name',language),'summary':agent_text(item,'purpose',language),'status':skill_status_label(item.get('status'),language),'details':details,'actions':actions}
+            return {'bundled':skill_is_bundled(item),'title':agent_text(item,'name',language),'summary':agent_text(item,'purpose',language),'status':skill_status_label(item.get('status'),language),'details':details,'actions':actions}
         refresh_skills=self.keyed_registry(skill_area,lambda:[r for r in self.snapshot.get('rules',{}).get('skills',[]) if r.get('scope')=='user_installed'],skill_model,minimum=300,maximum=3)
         legacy_holder={'url':None}
         def open_legacy():
@@ -2669,7 +2936,9 @@ class Dashboard:
                 import webbrowser
                 webbrowser.open(legacy_holder['url'])
         legacy=self.filter_chip(area,'Task skill ↗' if en else '任务 Skill ↗',open_legacy)
-        self.label(area,'Project guidelines' if en else '项目规范',16,self.fg,True,raw=True).pack(anchor='w',pady=(8,8))
+        rules_title=self.tk.Frame(area,bg=self.bg);rules_title.pack(fill='x',pady=(8,8));rules_title.columnconfigure(0,weight=1)
+        self.label(rules_title,'Project guidelines' if en else '项目规范',16,self.fg,True,raw=True).grid(row=0,column=0,sticky='w')
+        self.bundled_badge(rules_title).grid(row=0,column=1,sticky='e')
         groups_area=self.tk.Frame(area,bg=self.bg);groups_area.pack(fill='x');groups={};previous={}
         levels={'enforced':('程序校验','App enforced'),'workflow':('执行约定','Workflow'),'planned':('待落地','Planned')}
         self.label(area,'Source: packaged project_rules.json · read-only' if en else '统一来源：项目 project_rules.json · 只读展示',14,self.muted,raw=True).pack(anchor='w',pady=10)

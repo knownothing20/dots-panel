@@ -87,7 +87,7 @@ class RetainedUpdateTests(unittest.TestCase):
         first=boxes[0];controls=list(first.children);rows[0]['status']='done';reconcile()
         self.assertEqual(len(boxes),1);self.assertEqual(first.status_label.options['text'],'done');self.assertEqual(first.title_label.configurations,[]);self.assertEqual(first.summary_label.configurations,[]);self.assertEqual(first.surface.deleted,0);self.assertEqual(first.children,controls)
     def test_anonymous_is_fixed_neutral_without_invented_role(self):
-        actor=collaboration_actor({'attribution':None},{'agents':[{'id':'owner'}]},'en');self.assertEqual(actor['label'],'Anonymous');self.assertEqual(actor['role'],'');self.assertFalse(actor['known']);self.assertIsNone(actor['agent'])
+        actor=collaboration_actor({'attribution':None},{'agents':[{'id':'owner'}]},'en');self.assertEqual(actor['label'],'Historical author unknown');self.assertEqual(actor['role'],'');self.assertFalse(actor['known']);self.assertIsNone(actor['agent'])
     def test_timeline_keeps_old_widget_and_buffers_off_bottom(self):
         v=self.view();v.selected_task='task';v.page='conversations';v.detail_tab='timeline';v.detail_meta=False
         v.snapshot={'tasks':[{'id':'task','name':'Task'}],'runs':[{'id':'r','task_id':'task','status':'running','started':1}]};v.rows=[{'id':'task','values':['Task','','Running','','','Stamp'],'run':{'status':'running'}}]

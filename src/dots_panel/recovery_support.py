@@ -66,9 +66,11 @@ class RecoveryStoreMixin:
                            (time.time(),project,'system',stage,'负责人 / Owner: '+name+' · '+effective_type,task_id,'verified'))
         return {'agent_id':agent_id,'task_id':task_id}
 
-    def agent_run_assign(self, run_id, agent_id, work_type='unspecified'):
+    def agent_run_assign(self, run_id, agent_id, work_type='unspecified', **configuration):
         from .app import WORK_TYPES, OPEN_STATUSES
         import uuid
+        from .execution_config import normalize_config, config_from_row, FIELDS
+        config = normalize_config(**configuration)
         if work_type not in WORK_TYPES:
             raise ValueError('Invalid assignment work type')
         with self.connect() as db:
@@ -79,15 +81,15 @@ class RecoveryStoreMixin:
             if not run:
                 raise ValueError('Unknown run ID')
             current = db.execute('SELECT * FROM assignment_episodes WHERE run_id=? AND agent_id=? ORDER BY assigned_at DESC,id DESC LIMIT 1',(run_id,agent_id)).fetchone()
-            if current and current['work_type']==work_type and (run['status'] not in OPEN_STATUSES or current['ended_at'] is None and current['provenance']=='explicit'):
+            if current and current['work_type']==work_type and config_from_row(current)==config and (run['status'] not in OPEN_STATUSES or current['ended_at'] is None and current['provenance']=='explicit'):
                 return {'run_id':run_id,'agent_id':agent_id,'assignment_id':current['id'],'record_only':True,'deduplicated':True}
             if run['status'] not in OPEN_STATUSES:
                 raise ValueError('Cannot change assignments of a finished run')
             now = time.time()
             if current and current['ended_at'] is None:
-                db.execute('UPDATE assignment_episodes SET ended_at=?,end_reason=? WHERE id=?',(now,'Role changed',current['id']))
+                db.execute('UPDATE assignment_episodes SET ended_at=?,end_reason=? WHERE id=?',(now,'Role or configuration changed',current['id']))
             assignment_id = uuid.uuid4().hex
-            db.execute('INSERT INTO assignment_episodes VALUES(?,?,?,?,?,NULL,?,?)',(assignment_id,run_id,agent_id,work_type,now,'','explicit'))
+            db.execute('INSERT INTO assignment_episodes(id,run_id,agent_id,work_type,assigned_at,ended_at,end_reason,provenance,'+','.join(FIELDS)+') VALUES(?,?,?,?,?,NULL,?,?,'+','.join('?' for _ in FIELDS)+')',(assignment_id,run_id,agent_id,work_type,now,'','explicit',*(config[k] for k in FIELDS)))
             db.execute('INSERT INTO agent_run_assignments VALUES(?,?,?,?) ON CONFLICT(run_id,agent_id) DO UPDATE SET work_type=excluded.work_type,assigned_at=excluded.assigned_at',(run_id,agent_id,work_type,now))
         return {'run_id':run_id,'agent_id':agent_id,'assignment_id':assignment_id,'record_only':True,'deduplicated':False}
 
@@ -193,3 +195,29 @@ def recovery_notice(directory):
                 'notice_en':'Restored from retained records; history is incomplete. Events are non-verbatim summaries; historical states do not establish current execution.'}
     except (OSError,ValueError,UnicodeError,AttributeError):
         return None
+
+
+def load_recovered_evidence(directory):
+    """Bounded, read-only separate evidence history; never recreates original rows."""
+    import json,os,stat
+    from pathlib import Path
+    result={'original_history_complete':False,'events':[],'status':'not_recorded'}
+    path=Path(directory)/'config/recovered-evidence-ledger.json'
+    try:
+        from .app import open_directory
+        parent=open_directory(path.parent)
+        try:fd=os.open(path.name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=parent)
+        finally:os.close(parent)
+        with os.fdopen(fd,'rb') as stream:
+            info=os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_mode&0o077 or info.st_size>2*1024*1024:raise ValueError('Invalid evidence file')
+            data=json.loads(stream.read(2*1024*1024+1))
+        if not isinstance(data,dict) or data.get('original_history_complete') is not False or not isinstance(data.get('events'),list) or len(data['events'])>10000:raise ValueError('Invalid evidence ledger')
+        fields=('evidence_id','source_observed_at_utc','source_observed_at_beijing','topic','fact_summary','evidence_level','remaining_unknown','known_original_task_id','known_original_run_id')
+        seen=set();events=[]
+        for row in data['events']:
+            if not isinstance(row,dict) or not isinstance(row.get('evidence_id'),str) or not row.get('fact_summary') or row['evidence_id'] in seen:raise ValueError('Invalid or duplicate evidence identity')
+            seen.add(row['evidence_id']);events.append({k:row.get(k) for k in fields})
+        return {**result,'status':'available','baseline_cutoff_utc':data.get('baseline_cutoff_utc'),'events':events}
+    except FileNotFoundError:return result
+    except (OSError,ValueError,UnicodeError,TypeError):return {**result,'status':'unavailable','error':'Recovered evidence ledger could not be safely read'}

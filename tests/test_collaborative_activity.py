@@ -109,7 +109,7 @@ class CollaborationTests(unittest.TestCase):
         db.executescript("CREATE TABLE tasks(id TEXT PRIMARY KEY); CREATE TABLE runs(id TEXT,status TEXT,finished REAL); CREATE TABLE agent_run_assignments(run_id TEXT,agent_id TEXT,work_type TEXT,assigned_at REAL); CREATE TABLE agents(id TEXT PRIMARY KEY); INSERT INTO tasks VALUES('keep'); INSERT INTO runs VALUES('r','running',NULL); INSERT INTO agent_run_assignments VALUES('r','a','review',1);")
         class FailSeed:
             def execute(self,sql,*args):
-                if sql.startswith('INSERT INTO assignment_episodes VALUES'):
+                if sql.startswith('INSERT INTO assignment_episodes'):
                     raise sqlite3.OperationalError('Synthetic seed failure')
                 return db.execute(sql,*args)
         with self.assertRaises(sqlite3.OperationalError):migrate(FailSeed())

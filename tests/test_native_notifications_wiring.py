@@ -182,3 +182,23 @@ class NativeAsyncInputTests(unittest.TestCase):
         with patch('dots_panel.native_notifications.time.monotonic',side_effect=lambda:root.now/1000):
             ui,view=make_view(root,EventWidget,False);root.advance(2);ui.expand();root.advance(400);ui.keyboard_input();ui.controls['progress'].focus_set();ui.controls['progress'].space_activate();root.after(20,lambda:ui.on_resize(SimpleNamespace(widget=root)));root.advance(300)
             self.assertEqual(view.selected_task,'t');self.assertIs(root.focus,view.page_scroll);self.assertFalse(ui.canvas.mapped);ui.close();root.advance(100);self.assertFalse(root.jobs)
+
+class NativeFailedOpenPreservesUnreadTests(unittest.TestCase):
+    def test_renderer_failure_does_not_acknowledge(self):
+        ui,root,view=NativeNotificationControllerTests().make()
+        def fail():raise RuntimeError('Synthetic render failure')
+        view.render_page=fail
+        ui.expand();ui.open_task()
+        self.assertEqual(ui.state.counts()['conversations'],1)
+        self.assertIn('kept unread',ui.open_error)
+        ui.close()
+
+    def test_requirement_must_return_true_and_be_visible(self):
+        ui,root,view=NativeNotificationControllerTests().make()
+        ui.state.cards[0].update(id='requirement:q',kind='requirement',requirement_id='q')
+        ui.state.unread['conversations']={'requirement:q':'t'}
+        view.open_requirement=lambda _:False
+        ui.expand();ui.open_task();self.assertEqual(ui.state.counts()['conversations'],1)
+        view.open_requirement=lambda _:True
+        ui.open_task();self.assertEqual(ui.state.counts()['conversations'],0)
+        ui.close()

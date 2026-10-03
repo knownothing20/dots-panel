@@ -51,18 +51,20 @@ function renderPreferences() {
 }
 const statuses = {waiting_user:'等待用户',waiting_external:'等待外部结果',paused:'已暂停记录',awaiting_review:'等待验收',pending:'待开始',running:'运行中', succeeded:'已完成', failed:'失败', cancelled:'已取消'};
 let busy = false;
-let workspaceFilter = 'all';
+let stateReadEpoch=0, stateNavigationPending=false;
+let workspaceFilter = 'unfinished';
 let adviceTaskId=null;
 let detailTab='timeline';
 let collaborationModeFilter='all', conversationTask=null, conversationFilters={agent:'',role:'',task:''}, conversationOffset=0;
 let conversationRead={key:'',signature:'',data:null,error:'',serial:0};
 const detailScrollPositions={timeline:0,files:0};
-const expandedRules=new Set(), expandedDiagnostics=new Set(), expandedSteps=new Set();
+const expandedRules=new Set(), expandedDiagnostics=new Set(), expandedSteps=new Set(), expandedRequirements=new Set();
 let renderedTaskId=null;
+let requirementPreview={id:null,returnFocus:null};
 const expandedSchedules=new Set(), expandedSoftware=new Set(), expandedSkills=new Set();
 let workspaceQuery = '';
 let lastState = null;
-const panelNotifications=typeof PanelNotifications!=='undefined'?new PanelNotifications.Controller({document,language:()=>language,avatar:agentAvatar,openTask:(id,{keyboard=false}={})=>{const task=lastState?.tasks?.find(item=>item.id===id);if(task){selectTask(task);if(keyboard)$('detail-scroll').focus({preventScroll:true});}}}):null;
+const panelNotifications=typeof PanelNotifications!=='undefined'?new PanelNotifications.Controller({document,language:()=>language,avatar:agentAvatar,openTask:async(id,{keyboard=false,requirementId=null}={})=>{if(requirementId)return openRequirement(requirementId,{preserveView:false});const task=lastState?.tasks?.find(item=>item.id===id);if(!task)throw Error('Task is unavailable');selectTask(task);if($('conversation-detail').hidden)throw Error('Task did not become visible');if(keyboard)$('detail-scroll').focus({preventScroll:true});return true;}}):null;
 function element(tag, text, className) { const node = document.createElement(tag); node.textContent = text; if (className) node.className = className; return node; }
 // Preserve open evidence, focused disclosure and the visible timeline item during polling.
 function disclosure(node,store,key) {
@@ -131,10 +133,10 @@ function renderStatusFilters(state) {
 }
 function showPage() {
   const requested=location.hash.slice(1);
-  const page=['overview','conversations','schedules','software','rules','about','settings'].includes(requested)?requested:'overview';
+  const page=['overview','conversations','schedules','memory','reset','software','rules','about','settings'].includes(requested)?requested:'overview';
   for(const node of document.querySelectorAll('[data-page]'))node.hidden=node.dataset.page!==page;
   for(const node of document.querySelectorAll('[data-nav]')){node.classList.toggle('active',node.dataset.nav===page);if(node.dataset.nav===page)node.setAttribute('aria-current','page');else node.removeAttribute('aria-current');}
-  panelNotifications?.markRead(page,page==='conversations'?$('task-filter').value||null:null);
+  if(page!=='conversations'||!$('task-filter').value)panelNotifications?.markRead(page,page==='conversations'?null:undefined);
   syncDetailShell(Boolean($('task-filter').value));
 }
 function staleLabel(run){return t(run.tracking_mode==='heartbeat'?'心跳过期 · 状态待确认':'进度更新较久，执行状态待确认');}
@@ -215,7 +217,7 @@ function renderSchedules(schedules) {
   if(!schedules.length)$('schedule-cards').append(registryCard(t('还没有登记的自动化'),t('使用本地 CLI 登记元数据，不会自动创建定时器。')));
   for(const item of schedules){
     const view=compactView(item),{platform,result}=view,card=element('article','','registry-card schedule-card');card.dataset.patchKey='schedule:'+item.id;
-    card.append(element('h2',item.name,'schedule-title'),element('span',view.label,'status schedule-status'),element('p',view.cadence,'schedule-cadence'),element('p',view.recent,'schedule-result'));
+    const heading=element('div','','bundled-heading');heading.append(element('h2',item.name,'schedule-title'));if(schedulerBundled(item,lastState))heading.append(bundledBadge());card.append(heading,element('span',view.label,'status schedule-status'),element('p',view.cadence,'schedule-cadence'),element('p',view.recent,'schedule-result'));
     const details=element('details','','registry-details');details.dataset.disclosureKey='schedule:'+item.id;details.open=expandedSchedules.has(item.id);details.append(element('summary',phrase('详情','Details')));
     PanelPatch.listen(details,'toggle',(_event,current)=>{if(current.open)expandedSchedules.add(item.id);else expandedSchedules.delete(item.id);});
     if(item.project)details.append(element('p',`${phrase('项目','Project')}: ${item.project}`));
@@ -229,7 +231,7 @@ function renderSchedules(schedules) {
     card.append(details);$('schedule-cards').append(card);
   }
 }
-function selectTask(task,advice=false) {if($('task-filter').value!==task.id){$('detail-more').open=false;setDetailTab('timeline');detailScrollPositions.timeline=0;detailScrollPositions.files=0;$('detail-scroll').scrollTop=0;}adviceTaskId=advice?task.id:null;$('task-filter').value=task.id;render(lastState);location.hash='conversations';showPage();if(advice)$('advice-text').focus();}
+function selectTask(task,advice=false) {closeRequirementPreview(false);if($('task-filter').value!==task.id){$('detail-more').open=false;setDetailTab('timeline');detailScrollPositions.timeline=0;detailScrollPositions.files=0;$('detail-scroll').scrollTop=0;}adviceTaskId=advice?task.id:null;$('task-filter').value=task.id;render(lastState);location.hash='conversations';showPage();if(advice)$('advice-text').focus();}
 function outputSummary(state,taskId){return state.output_summaries?.[taskId]||{count:0,kinds:[],main:null};}
 function outputCountText(summary){
   if(!summary.count)return phrase('尚无已登记成果','No registered outputs');
@@ -293,7 +295,7 @@ function renderRules(data={}){
   const skillGrid=element('div','','skill-grid');area.append(skillGrid);
   for(const item of skills){
     const row=element('section','','skill-row');row.dataset.patchKey='skill:'+item.id;const head=element('div','','skill-heading');
-    head.append(element('h3',skillText(item,'name')));
+    head.append(element('h3',skillText(item,'name')));if(item.source?.origin==='project_bundled')head.append(bundledBadge());
     if(safeSkillURL(item.url)){const link=element('a',en?'Manage ↗':'管理 ↗','binding-link');link.href=item.url;link.target='_blank';link.rel='noopener noreferrer';head.append(link);}
     row.append(head,element('p',skillText(item,'purpose')),element('p',(en?'When: ':'使用场景：')+skillText(item,'when_used'),'skill-caption'));
     const details=element('details','','registry-details');details.dataset.disclosureKey='skill:'+item.id;details.open=expandedSkills.has(item.id);details.append(element('summary',en?'Details':'详情'));
@@ -312,7 +314,7 @@ function renderRules(data={}){
   if(safeSkillURL(data.skill_url)&&!skills.some(item=>item.url===data.skill_url)){
     const link=element('a',en?'Task skill ↗':'任务 Skill ↗','binding-link');link.href=data.skill_url;link.target='_blank';link.rel='noopener noreferrer';area.append(link);
   }
-  area.append(element('h2',en?'Project guidelines':'项目规范'));
+  const projectTitle=element('div','','bundled-heading');projectTitle.append(element('h2',en?'Project guidelines':'项目规范'),bundledBadge());area.append(projectTitle);
   for(const group of data.groups||[]){
     const details=disclosure(element('details','','rule-group'),expandedRules,'rule:'+group.id),summary=element('summary',group.title?.[locale]||'');details.append(summary);
     for(const item of group.items||[]){details.append(element('h3',(labels[item.level]||labels.planned)+' · '+(item.title?.[locale]||'')),element('p',item.body?.[locale]||''));}area.append(details);
@@ -424,7 +426,7 @@ function renderTaskParticipants(state,taskId) {
     const item=element('div','','activity-participant');item.dataset.patchKey='participant:'+agent.id;const head=element('div','','agent-heading');head.append(agentAvatar(agent),element('strong',PanelAgents.reference(agent,language)),element('span',PanelAgents.text(agent,'name',language)));item.append(head);
     const roles=[...new Set(assignments.map(a=>PanelAgents.type(a.work_type,language)))];item.append(element('small',phrase('已登记职责 · ','Recorded roles · ')+roles.join(' / ')));
     const observed=PanelAgents.observation(agent,state);item.append(element('small',(observed.recent?PanelAgents.lifecycle(agent.status,language):phrase('状态待核实','State unconfirmed'))+' · '+stamp(agent.observed_at)));
-    const detail=element('details','','participant-details');detail.append(element('summary',t('详情')),element('p',phrase('昵称 · ','Nickname · ')+PanelAgents.text(agent,'name',language)),element('p',identityLabel(agent)),element('p',identitySource(agent)+' · '+stamp(agent.identity_observed_at)),element('p',phrase('面板短编号，不是平台 UUID','Panel-local short ID, not a platform UUID')));item.append(detail);
+    const detail=element('details','','participant-details');detail.append(element('summary',t('详情')),element('p',phrase('昵称 · ','Nickname · ')+PanelAgents.text(agent,'name',language)),element('p',identityLabel(agent)),element('p',identitySource(agent)+' · '+stamp(agent.identity_observed_at)),element('p',phrase('面板短编号，不是平台 UUID','Panel-local short ID, not a platform UUID')));for(const assignment of assignments)detail.append(element('p',stamp(assignment.assigned_at)+' · '+PanelAgents.type(assignment.work_type,language)+' · '+executionConfigLabel(assignment.execution_config||assignment),'execution-config'));item.append(detail);
     area.append(item);
   }
 }
@@ -460,26 +462,31 @@ function renderConversationStream(state,taskId) {
   conversationSelect('conversation-task',[['',phrase('整个项目','Whole project')],...choices.tasks.map(t=>[t.id,t.name])],conversationFilters.task);
   const task=(state.tasks||[]).find(t=>t.id===taskId);$('conversation-task-label').hidden=task?.activity_kind!=='project';
   const key=JSON.stringify([taskId,conversationFilters,conversationOffset]),cached=conversationRead.key===key?conversationRead.data:null;
-  const rows=[...(cached?.rows||PanelCollaboration.rows(state,taskId,conversationFilters))].sort((a,b)=>(a.created||0)-(b.created||0)||String(a.key).localeCompare(String(b.key)));
+  const requirementMap=new Map((state.requirements||[]).map(q=>[q.id,q]));
+  let baseRows=[...(cached?.rows||PanelCollaboration.rows(state,taskId,conversationFilters))];
+  if(!cached&&!conversationFilters.agent&&!conversationFilters.role){const ids=new Set([taskId,...(task?.activity_kind==='project'?(state.tasks||[]).filter(t=>t.parent_task_id===taskId).map(t=>t.id):[])]);for(const q of requirementMap.values())if(ids.has(q.task_id)&&!baseRows.some(r=>r.key==='requirement:'+q.id))baseRows.push({kind:'requirement',key:'requirement:'+q.id,requirement_id:q.id,created:q.observed_at,task_id:q.task_id});}
+  const rows=baseRows.map(row=>row.kind==='requirement'?{...row,requirement:requirementMap.get(row.requirement_id||row.source_id||row.id)||row.requirement}:row).sort((a,b)=>(a.created||0)-(b.created||0)||String(a.key).localeCompare(String(b.key)));
   const area=$('project-activity'),nextRows=[];area.setAttribute('aria-label',phrase('已登记协作记录','Recorded conversation'));
   for(const event of rows){
+    if(event.kind==='requirement'){nextRows.push(requirementCard(event.requirement||{},event));continue;}
     const actor=PanelCollaboration.actor(event,state,language),item=element('article','','event conversation-message');item.dataset.timelineKey=event.key;item.style.setProperty('--actor-tint',actor.color);
     const head=element('div','','message-author');
+    const system=event.actor_type==='system'||event.role==='system'||event.kind==='system'||['state_changed','assignment','requirement_state','requirement_owner'].includes(event.stage);if(system){actor.label=phrase('系统记录','System record');actor.role='';actor.known=false;}
     head.append(actor.known?agentAvatar(actor.agent):anonymousAvatar());
     const identity=element('div','','message-identity');identity.append(element('strong',actor.label),element('small',[actor.shortId,actor.role].filter(Boolean).join(' · ')));head.append(identity,element('time',stamp(event.created)));item.append(head);
     const stage=event.kind==='note'?phrase('开始说明','Start note'):event.kind==='event'?phrase('运行事件','Run event'):t(event.stage==='progress'?phrase('工作进展','Work progress'):({planned:'规划',implementation:'实现',testing:'测试',review:'审查',delivered:'交付'}[event.stage]||event.stage||''));
     const taskName=(state.tasks||[]).find(t=>t.id===event.task_id)?.name||event.task_id;
-    item.append(element('small',[stage,event.state?t(({unknown:'历史状态未保留',planned:'计划中',in_progress:'进行中',verified:'已验证'}[event.state]||event.state)):'',task?.activity_kind==='project'?taskName:''].filter(Boolean).join(' · '),'message-context'),element('p',event.message||'','message-body'));nextRows.push(item);
+    item.append(element('small',[stage,event.state?t(({unknown:'历史状态未保留',planned:'计划中',in_progress:'进行中',verified:'已验证'}[event.state]||event.state)):'',task?.activity_kind==='project'?taskName:''].filter(Boolean).join(' · '),'message-context'),element('p',event.message||'','message-body'));item.append(element('small',executionConfigLabel(event.attribution?.execution_config),'execution-config'));nextRows.push(item);
   }
   if(!rows.length)nextRows.push(element('p',phrase('没有符合筛选的记录','No matching records'),'event-empty'));
-  PanelPatch.children(area,nextRows);renderConversationFilterChips();
+  PanelPatch.children(area,nextRows);renderConversationFilterChips();renderRequirementBookmarks(state,taskId);
   const count=cached?`${cached.offset+Math.min(1,cached.rows.length)}–${cached.offset+cached.rows.length} / ${cached.total}`:phrase('当前快照','Current snapshot');
   $('conversation-note').textContent=phrase('本页按时间顺序 · 摘要记录，非实时聊天','Chronological on this page · Recorded summaries, not live chat')+(conversationRead.error?' · '+(cached?phrase('刷新失败，保留上次读取','Refresh failed; showing last successful read'):phrase('完整记录读取失败，当前仅快照窗口','Full history unavailable; snapshot window only')):!cached&&state.timeline_window?.truncated?' · '+phrase('快照有截断，正在读取完整记录','Snapshot is truncated; loading full history'):'');
-  $('conversation-page').textContent=count;$('conversation-previous').disabled=!cached||!conversationOffset;$('conversation-next').disabled=!cached||!cached.has_more;$('conversation-pagination').hidden=!cached||cached.total<=cached.limit;
+  $('conversation-page').textContent=count;$('conversation-previous').disabled=!cached||!conversationOffset;$('conversation-next').disabled=!cached||!cached.has_more;$('conversation-pagination').hidden=(!cached||cached.total<=cached.limit)&&!conversationRead.pending;
   if(taskId)readConversation(state,taskId,key);
 }
 function readConversation(state,taskId,key) {
-  const signature=JSON.stringify([key,state.activity,state.events,state.timeline_window]);
+  const signature=JSON.stringify([key,state.activity,state.events,state.timeline_window,state.requirement_counters]);
   if(conversationRead.key===key&&conversationRead.signature===signature)return;
   const serial=conversationRead.serial+1,old=conversationRead.key===key?conversationRead.data:null;
   conversationRead={key,signature,data:old,error:'',serial};
@@ -488,7 +495,13 @@ function readConversation(state,taskId,key) {
   fetch('/api/collaboration-timeline?'+query,{signal:AbortSignal.timeout(5000)}).then(response=>{if(!response.ok)throw Error('read');return response.json();}).then(data=>{
     if(conversationRead.serial!==serial||conversationTask!==taskId)return;
     if(!Array.isArray(data.rows)||!Number.isInteger(data.total))throw Error('shape');
-    const view=captureView(taskId);conversationRead.data=data;renderConversationStream(lastState||state,taskId);restoreView(view,taskId);
+    const view=captureView(taskId);
+    if(old&&view.sameTask&&!view.followBottom&&view.detail>0){
+      // Keep the currently read page's membership until explicit navigation; current requirement facts still come from the complete snapshot.
+      conversationRead.pending=data;const latest=new Map(data.rows.map(row=>[row.key,row]));conversationRead.data={...old,rows:old.rows.map(row=>latest.get(row.key)||row)};
+      $('conversation-new').hidden=false;$('conversation-new').textContent=phrase('更新当前页 ↓','Update this page ↓');$('conversation-pagination').hidden=false;
+    }else{conversationRead.data=data;conversationRead.pending=null;$('conversation-new').hidden=true;}
+    renderConversationStream(lastState||state,taskId);restoreView(view,taskId);
   }).catch(()=>{if(conversationRead.serial===serial){conversationRead.error='read';const note=$('conversation-note');note.textContent=conversationRead.data?phrase('刷新失败，保留上次读取；下次刷新重试','Refresh failed; showing last successful read. Retrying on refresh'):phrase('完整记录读取失败，当前仅显示快照窗口；下次刷新重试','Full history unavailable; snapshot window only. Retrying on refresh');}});
 }
 function ownerBadge(taskId,state) {
@@ -634,7 +647,7 @@ function render(state,polling=false) {
 
   renderAbout(state.about);
   renderBackup(state.backup);
-  renderMetrics(state);
+  renderMetrics(state);renderMemory(state);renderReset(state);renderRecoveredEvidence(state);
   const selected = $('task-filter').value;
   const taskChoices=JSON.stringify([language,...state.tasks.map(task=>[task.id,task.name])]);
   if($('task-filter').dataset.choices!==taskChoices&&document.activeElement!==$('task-filter')){
@@ -652,7 +665,7 @@ function render(state,polling=false) {
   renderFiles(state,selected);renderTaskParticipants(state,selected);
   renderOutputBar(state,selected);renderConversationHeader(state,chosen);
   $('detail-status').textContent=chosen?t(statuses[chosenRun?.status||chosen.latest_status||'pending']):'';
-  $('detail-updated').textContent=chosen?`${t('最近更新')} ${stamp(chosenRun?.progress_updated||chosenRun?.updated||chosen.created)}`:'';
+  $('detail-updated').textContent=chosen?`${t('最近更新')} ${stamp(meaningfulTaskTime(state,chosen,chosenRun))}`:'';
   renderDetailMetadata(state,chosen,chosenRun,selected);
   const filteredTaskRows = PanelWorkspace.rows(state.tasks,state.current_runs||state.latest_runs||state.runs,workspaceFilter,workspaceQuery,state).filter(({task})=>PanelCollaboration.matchesMode(task,collaborationModeFilter));
   $('task-count').textContent = filteredTaskRows.length;
@@ -675,7 +688,7 @@ function render(state,polling=false) {
   renderSchedules(state.schedules||[]);
   renderSoftware(state);
   if(focusedFilter)$(focusedFilter)?.focus({preventScroll:true});
-  restoreView(view,selected);
+  restoreView(view,selected);renderRequirementPreview(state);
   panelNotifications?.observe(state);
 }
 function headerRegion(value) {
@@ -688,17 +701,18 @@ function headerStamp(value) {
   return new Intl.DateTimeFormat(language==='zh'?'zh-CN':'en-GB',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).format(new Date(value*1000));
 }
 async function refresh() {
-  if (busy) return;
+  if (busy||stateNavigationPending) return;
+  const epoch=stateReadEpoch;
   const manual=arguments[0]===true;
   busy = true;if(manual)$('refresh').disabled = true;
-  try { const response = await fetch('/api/state',{cache:'no-store',signal:AbortSignal.timeout(4000)}); if(!response.ok) throw new Error('offline'); render(await response.json(),true); $('connection').textContent = phrase('本地数据','Local data')+' · '+phrase('每 5 秒','Every 5s')+' · '+headerStamp(lastState?.metrics?.sampled_at)+' · '+headerRegion(lastState?.exit_region); $('connection').title=lastState?.exit_region?'ipwho.is · '+stamp(lastState.exit_region.checked_at):''; $('indicator').classList.remove('offline'); }
-  catch (_) { $('connection').textContent = t('连接中断 · 显示上次数据'); $('indicator').classList.add('offline'); }
+  try { const response = await fetch('/api/state'+($('task-filter').value?'?task_id='+encodeURIComponent($('task-filter').value):''),{cache:'no-store',signal:AbortSignal.timeout(4000)}); if(!response.ok) throw new Error('offline');const input=await response.json();if(epoch!==stateReadEpoch)return;render(input,true); $('connection').textContent = phrase('本地数据','Local data')+' · '+phrase('每 5 秒','Every 5s')+' · '+headerStamp(lastState?.metrics?.sampled_at)+' · '+headerRegion(lastState?.exit_region); $('connection').title=lastState?.exit_region?'ipwho.is · '+stamp(lastState.exit_region.checked_at):''; $('indicator').classList.remove('offline'); }
+  catch (_) {if(epoch!==stateReadEpoch)return; $('connection').textContent = t('连接中断 · 显示上次数据'); $('indicator').classList.add('offline'); }
   finally {busy = false;if(manual)$('refresh').disabled = false;}
 }
 $('workspace-search').addEventListener('input',()=>{workspaceQuery=$('workspace-search').value;if(lastState)render(lastState);});
 $('workspace-filter').addEventListener('change',()=>{workspaceFilter=$('workspace-filter').value;if(lastState)render(lastState);});
-window.addEventListener('hashchange',()=>{showPage();if(lastState)render(lastState);});
-for(const nav of document.querySelectorAll('[data-nav]'))nav.addEventListener('click',()=>panelNotifications?.markRead(nav.dataset.nav));
+window.addEventListener('hashchange',()=>{if(requirementPreview.id&&requirementPreview.pageHash!==location.hash)closeRequirementPreview(false);showPage();if(lastState)render(lastState);});
+// Unread acknowledgement happens after successful navigation, never on an unverified click.
 $('back-conversations').addEventListener('click',()=>{adviceTaskId=null;$('task-filter').value='';if(lastState)render(lastState);});
 showPage();
 $('toggle-events').addEventListener('click',()=>{ const expanded=$('toggle-events').getAttribute('aria-expanded')==='true'; $('events').hidden=expanded; $('toggle-events').setAttribute('aria-expanded',String(!expanded)); $('toggle-events').textContent=phrase(expanded?'展开原始运行记录':'收起原始运行记录',expanded?'Show raw run records':'Hide raw run records'); });
@@ -732,6 +746,7 @@ function renderFiles(state,taskId){
   for(const item of records){const card=element('article','','file-card');card.dataset.patchKey='artifact:'+item.id;card.append(element('h3',item.title),element('small',`${t({report:'报告',image:'图片',document:'文档',data:'数据',video:'视频',other:'其他'}[item.kind]||'其他')} · ${Number(item.size).toLocaleString()} B · ${stamp(item.created)}`),element('p',PanelWorkspace.delivery(item,language),'file-delivery'),element('p',item.relative_path,'file-path'),element('small',`SHA-256 · ${item.sha256}`));$('task-files').append(card);}
 }
 function setDetailTab(tab){
+  $('requirement-bookmarks').hidden=tab!=='timeline'||!$('requirement-bookmarks').children.length;
   detailScrollPositions[detailTab]=$('detail-scroll').scrollTop||0;detailTab=tab;
   $('timeline-panel').hidden=tab!=='timeline';$('files-panel').hidden=tab!=='files';
   if(lastState)renderConversationHeader(lastState,lastState.tasks.find(t=>t.id===$('task-filter').value));
@@ -787,12 +802,14 @@ function patchTaskCards(id,rows,state) {
 function renderIncremental(input) {
   const state={...input,current_runs:PanelWorkspace.currentRuns(input)},previous=lastState,selected=$('task-filter').value,view=captureView(selected);
   lastState=state;
-  const dataKeys=['tasks','runs','latest_runs','open_runs','current_runs','agents','agent_assignments','agent_run_assignments','assignment_episodes','activity','events','progress_updates','artifacts','output_summaries','closeouts','bindings','automation_bindings'];
-  const identical=[...dataKeys,'metrics','software','schedules','rules','about','recovery','timeline_window','backup'].every(key=>JSON.stringify(state[key])===JSON.stringify(previous[key]));
+  const dataKeys=['tasks','runs','latest_runs','open_runs','current_runs','agents','agent_assignments','agent_run_assignments','assignment_episodes','activity','events','progress_updates','artifacts','output_summaries','closeouts','bindings','automation_bindings','requirements','requirement_events','requirement_stream_id','companions','current_companion_scheduler_bindings'];
+  const identical=[...dataKeys,'metrics','software','schedules','rules','about','recovery','timeline_window','backup','reset_events','reset_monitor_status','recovered_evidence'].every(key=>JSON.stringify(state[key])===JSON.stringify(previous[key]));
   if(identical&&!conversationRead.error)return;
   const changed=dataKeys.some(key=>JSON.stringify(state[key])!==JSON.stringify(previous[key]));
+  if(JSON.stringify(state.recovered_evidence)!==JSON.stringify(previous.recovered_evidence))renderRecoveredEvidence(state);
   if(JSON.stringify(state.backup)!==JSON.stringify(previous.backup))renderBackup(state.backup);
-  if(JSON.stringify(state.metrics)!==JSON.stringify(previous.metrics))renderMetrics(state);
+  if(JSON.stringify(state.metrics)!==JSON.stringify(previous.metrics)){renderMetrics(state);renderMemory(state);}
+  if(JSON.stringify([state.reset_events,state.reset_monitor_status])!==JSON.stringify([previous.reset_events,previous.reset_monitor_status]))renderReset(state);
   if(JSON.stringify(state.recovery)!==JSON.stringify(previous.recovery)){textPatch('recovery-notice',state.recovery?.[language==='en'?'notice_en':'notice_zh']||'');$('recovery-info').hidden=!state.recovery;}
   if(changed){
     const rows=PanelWorkspace.rows(state.tasks,state.current_runs,workspaceFilter,workspaceQuery,state).filter(({task})=>PanelCollaboration.matchesMode(task,collaborationModeFilter));
@@ -803,7 +820,7 @@ function renderIncremental(input) {
     if(selected&&!task){$('task-filter').value='';$('conversation-detail').hidden=true;$('conversation-list').hidden=false;syncDetailShell(false);}
     if(task){
       textPatch('selected-task-title',task.name);textPatch('detail-status',t(statuses[run?.status||task.latest_status||'pending']));
-      textPatch('detail-updated',`${t('最近更新')} ${stamp(run?.progress_updated||run?.updated||task.created)}`);
+      textPatch('detail-updated',`${t('最近更新')} ${stamp(meaningfulTaskTime(state,task,run))}`);
       renderConversationHeader(state,task);
       changedSection('files:'+selected,[state.artifacts,state.output_summaries],()=>patchRegion(['task-files'],()=>renderFiles(state,selected)));
       changedSection('participants:'+selected,[state.agents,state.assignment_episodes,state.agent_run_assignments,state.current_runs],()=>patchRegion(['task-participants'],()=>renderTaskParticipants(state,selected)));
@@ -816,8 +833,110 @@ function renderIncremental(input) {
     }
   }else if(conversationRead.error&&selected){conversationRead.signature='';renderConversationStream(state,selected);}
   if(JSON.stringify(state.software)!==JSON.stringify(previous.software))patchRegion(['software-cards'],()=>renderSoftware(state));
-  if(JSON.stringify(state.schedules)!==JSON.stringify(previous.schedules))patchRegion(['schedule-cards','schedule-summary','automation-info-content'],()=>renderSchedules(state.schedules||[]));
+  if(JSON.stringify([state.schedules,state.current_companion_scheduler_bindings])!==JSON.stringify([previous.schedules,previous.current_companion_scheduler_bindings]))patchRegion(['schedule-cards','schedule-summary','automation-info-content'],()=>renderSchedules(state.schedules||[]));
   if(JSON.stringify(state.rules)!==JSON.stringify(previous.rules))patchRegion(['rules-content'],()=>renderRules(state.rules));
   if(JSON.stringify(state.about)!==JSON.stringify(previous.about))patchRegion(['about-rows','about-repository','about-notes','about-doctor'],()=>renderAbout(state.about));
-  restoreView(view,selected);panelNotifications?.observe(state);
+  restoreView(view,selected);renderRequirementPreview(state);panelNotifications?.observe(state);
 }
+
+
+function bundledBadge(){return element('span',phrase('◆ Panel 配套','◆ Panel bundled'),'panel-bundled');}
+function schedulerBundled(schedule,state={}){
+  if(state?.current_companion_scheduler_bindings!=null)return state.current_companion_scheduler_bindings.some(row=>row.explicit_current_binding===true&&row.status==='verified'&&row.reference===schedule.platform_observation?.task_id&&Boolean(row.source_reference));
+  let rows=state?.installation_observations;
+  if(!rows)rows=Object.entries(state?.about?.doctor?.observations||{}).map(([component,row])=>({...row,component}));
+  if(!Array.isArray(rows))rows=Object.values(rows);
+  const latest=rows.filter(row=>row.component==='scheduler_configuration').sort((a,b)=>(b.observed_at||0)-(a.observed_at||0)||(b.id||0)-(a.id||0))[0];
+  return Boolean(latest?.status==='verified'&&typeof latest.reference==='string'&&latest.reference.trim()&&latest.reference===schedule.platform_observation?.task_id);
+}
+function executionConfigLabel(config={}){
+  if(!config)config={};
+  const requested=config.requested_model&&config.requested_model!=='unknown'?config.requested_model+' / '+(config.requested_effort||'unknown'):phrase('未知','Unknown');
+  const actual=config.config_verification==='verified'&&config.actual_model&&config.actual_model!=='unknown'?config.actual_model+' / '+(config.actual_effort||'unknown'):phrase('未知','Unknown');
+  return phrase('请求：','Requested: ')+requested+' · '+phrase('实际观测：','Observed: ')+actual;
+}
+function meaningfulTaskTime(state,task,run){
+  const work=PanelWorkspace.workProgress(state,task.id,run);
+  return work.update?.created||work.latest?.created||run?.started||task.created;
+}
+function requirementStatus(value){return ({received:['已接收','Received'],in_progress:['进行中','In progress'],blocked:['受阻','Blocked'],pending_acceptance:['待验收','Pending acceptance'],completed:['已完成','Completed'],cancelled:['已取消','Cancelled']}[value]||[value||'未知',value||'Unknown'])[language==='en'?1:0];}
+function requirementOwner(q){const owner=q.owner||{};return owner.status==='confirmed'?(language==='en'?owner.name_en||owner.name:owner.name)||phrase('未知','Unknown'):phrase('负责人待确认','Owner unconfirmed');}
+function requirementWork(q){const latest=[...(q.status_history||[])].sort((a,b)=>(b.observed_at||0)-(a.observed_at||0)||(b.id||0)-(a.id||0))[0]||{};return q.current_step||latest.next_step||(['in_progress','blocked'].includes(latest.status)?latest.evidence:'')||phrase('尚未登记','Not recorded');}
+function requirementCard(q,event={}){
+  const card=element('article','','requirement-card');card.dataset.timelineKey='requirement:'+q.id;card.dataset.patchKey='requirement:'+q.id;card.dataset.requirementId=q.id;
+  const heading=element('div','','requirement-heading');heading.append(element('strong',phrase('◆ 需求','◆ Requirement')),element('time',stamp(q.observed_at??event.created)));card.append(heading,element('h3',q.summary||event.message||''),element('p',requirementStatus(q.status)+' · '+requirementOwner(q),'requirement-facts'),element('p',phrase('当前执行：','Current work: ')+requirementWork(q),'requirement-work'),element('small',executionConfigLabel(q.owner),'execution-config'));
+  const history=disclosure(element('details','','requirement-history'),expandedRequirements,'requirement:'+q.id);const summary=element('summary',phrase('状态与负责人历史','State and owner history'));summary.dataset.focusKey='requirement-history:'+q.id;history.append(summary);
+  for(const row of q.history||[]){const text=row.kind==='owner'?requirementOwner({owner:row.owner})+' · '+executionConfigLabel(row.owner):row.kind==='link'?[row.link_kind,row.target_type,row.target_id].filter(Boolean).join(' · '):requirementStatus(row.status);history.append(element('p',stamp(row.observed_at)+' · '+text+' · '+(row.evidence||'')));}
+  history.append(element('small',phrase('来源：','Source: ')+(q.source_event_id||phrase('未知','Unknown'))));card.append(history);return card;
+}
+function renderRequirementBookmarks(state,taskId){
+  const ids=PanelCollaboration.scope(state,taskId);const all=(state.requirements||[]).filter(q=>ids.has(q.task_id)),open=all.filter(q=>!['completed','cancelled'].includes(q.status)),area=$('requirement-bookmarks');
+  const pills=open.map((q,i)=>{const button=element('button',(i+1)+' · '+q.summary,'requirement-bookmark');button.type='button';button.dataset.patchKey=q.id;button.dataset.focusKey='bookmark:'+q.id;button.title=q.summary+' · '+requirementStatus(q.status)+' · '+requirementOwner(q);PanelPatch.listen(button,'click',()=>openRequirement(q.id).catch(()=>{}));return button;});PanelPatch.children(area,pills);area.hidden=!open.length||detailTab!=='timeline';
+  $('requirement-all').hidden=!all.length;$('requirement-all-title').textContent=phrase('全部需求','All requirements')+' · '+all.length;
+  const rows=all.map(q=>{const button=element('button',q.summary+' · '+requirementStatus(q.status),'requirement-list-item');button.type='button';button.dataset.patchKey=q.id;PanelPatch.listen(button,'click',()=>openRequirement(q.id).catch(()=>{}));return button;});PanelPatch.children($('requirement-all-list'),rows);
+}
+function renderRequirementPreview(state){
+  if(!requirementPreview.id)return;
+  const q=(state.requirements||[]).find(q=>q.id===requirementPreview.id);if(!q)return;
+  const area=$('requirement-preview-content'),card=requirementCard(q,{created:q.observed_at});card.dataset.timelineKey='preview:'+q.id;
+  PanelPatch.children(area,[card]);$('requirement-preview-title').textContent=phrase('需求详情','Requirement preview');$('requirement-preview-close').textContent=phrase('关闭 ×','Close ×');
+}
+function closeRequirementPreview(restoreFocus=true){
+  const previous=requirementPreview.returnFocus;$('requirement-preview').hidden=true;requirementPreview={id:null,returnFocus:null};
+  if(restoreFocus&&previous?.focus)previous.focus({preventScroll:true});
+}
+async function openRequirement(id,{preserveView=true}={}){
+  const error=$('requirement-navigation-error');
+  try{
+    let q=lastState?.requirements?.find(q=>q.id===id);if(!q)throw Error('missing');
+    if(!preserveView&&(location.hash!=='#conversations'||$('task-filter').value!==q.task_id||!lastState.tasks.some(task=>task.id===q.task_id))){
+      const epoch=++stateReadEpoch;stateNavigationPending=true;
+      try{
+        const response=await fetch('/api/state?task_id='+encodeURIComponent(q.task_id),{cache:'no-store',signal:AbortSignal.timeout(5000)});
+        if(!response.ok)throw Error('selected-read');const selected=await response.json();if(epoch!==stateReadEpoch)throw Error('superseded');
+        const task=selected.tasks?.find(task=>task.id===q.task_id);q=selected.requirements?.find(item=>item.id===id);if(!task||!q)throw Error('selected-missing');
+        render(selected,true);selectTask(task);
+      }finally{if(epoch===stateReadEpoch)stateNavigationPending=false;}
+    }
+    const previous=requirementPreview.id?requirementPreview.returnFocus:document.activeElement;
+    requirementPreview={id,returnFocus:previous,pageHash:location.hash};renderRequirementPreview(lastState);
+    const preview=$('requirement-preview');preview.hidden=false;
+    if(preview.getBoundingClientRect&&preview.getBoundingClientRect().height===0)throw Error('not-visible');
+    $('requirement-preview-close').focus({preventScroll:true});error.hidden=true;panelNotifications?.markRead('conversations',q.task_id,id);
+    return true;
+  }catch(exc){error.textContent=phrase('需求未能显示，未读状态已保留；请重试','Requirement could not be shown; unread state retained. Please retry');error.hidden=false;throw exc;}
+}
+function memoryBytes(value){if(value==null)return phrase('未知','Unknown');for(const [unit,scale] of [['GiB',2**30],['MiB',2**20],['KiB',2**10]])if(value>=scale)return (value/scale).toFixed(1)+' '+unit;return value+' B';}
+function renderMemory(state){
+  const m=state.metrics||{},p=m.process_memory||{},en=language==='en',limit=m.memory_quota_state==='unlimited'?phrase('无限制','Unlimited'):memoryBytes(m.memory_quota);
+  $('memory-boundary').textContent=phrase('系统、容器与进程独立观测；进程 RSS 不可直接相加。仅读取 /proc 数字目录 status 的 Name/VmRSS，不猜任务归属，不提供进程控制。','System, container and process scopes are separate. Process RSS is not additive. Only Name/VmRSS from numeric /proc status files; no inferred task ownership or process controls.');
+  const facts=[phrase('系统总量 / 可用：','System total / available: ')+memoryBytes(m.memory_total)+' / '+memoryBytes(m.memory_available),phrase('cgroup 当前 / 上限：','cgroup current / limit: ')+memoryBytes(m.cgroup_memory_current)+' / '+limit,phrase('进程采样：','Process sample: ')+(p.status||'unavailable')+' · '+stamp(p.sampled_at),phrase('最近尝试：','Last attempted: ')+stamp(p.attempted_at),phrase('可见 / 可读 / 不可读 / 已退出：','Visible / readable / unreadable / exited: ')+['visible_count','readable_count','unreadable_count','exited_count'].map(key=>p[key]??'—').join(' / '),'Scope: sampler_visible_processes',p.error||''];
+  PanelPatch.children($('memory-facts'),facts.map((text,i)=>{const node=element('p',text);node.dataset.patchKey='memory:'+i;return node;}));
+  const order=$('memory-sort').value||'rss_desc',rows=[...(p.rows||[])].sort((a,b)=>order==='name'?String(a.name).localeCompare(String(b.name))||a.pid-b.pid:order==='pid'?a.pid-b.pid:((order==='rss_asc'?1:-1)*(a.rss_bytes-b.rss_bytes)||a.pid-b.pid));
+  PanelPatch.children($('memory-process-rows'),rows.map(row=>{const tr=element('tr','');tr.dataset.patchKey=String(row.pid);for(const text of [row.pid,row.name,memoryBytes(row.rss_bytes),phrase('未知','Unknown')])tr.append(element('td',String(text)));return tr;}));
+  $('memory-name-head').textContent=phrase('进程名','Name');$('memory-task-head').textContent=phrase('任务归属','Task attribution');$('memory-sort-label').textContent=phrase('排序','Sort');$('memory-empty').textContent=rows.length?'':phrase('当前没有可用的进程采样','No process sample is currently available');
+}
+function renderReset(state){
+  $('reset-monitor-title').textContent=phrase('重置观察器','Reset observer');
+  $('reset-monitor-title').parentElement?.querySelector('.panel-bundled')?.replaceWith(bundledBadge());
+  $('reset-boundary').textContent=phrase('仅观察明确选择的固定组件。UTC 参考时间与北京时间表示同一时刻，不是 OpenAI 官方当地时间。每 60 秒本地采样不保证进程常驻，也不是平台每分钟定时任务；计划时间不等于实际观察。','Observes explicitly selected fixed components only. UTC reference time and Beijing time represent the same instant, not an official OpenAI local timezone. Local 60-second sampling does not guarantee persistence or a platform minutely schedule; planned time is not an actual observation.');
+  $('reset-monitor-status').textContent=phrase('观察器状态：','Observer status: ')+(typeof state.reset_monitor_status==='string'?state.reset_monitor_status:state.reset_monitor_status?.status||'unknown');
+  const eventNames={baseline_present:['基线存在','Baseline present'],initial_absent:['首次观察即缺失','Initially absent'],path_missing:['组件缺失','Component missing'],identity_changed:['组件身份变化','Identity changed'],path_reappeared:['重新出现','Component reappeared'],observation_gap:['观察缺口','Observation gap'],clock_rollback:['时钟回退','Clock rollback'],inspection_error:['检查失败','Inspection error'],historical_estimate:['历史估算','Historical estimate']};
+  const fieldNames={observed_at_utc:['UTC 观察时间','Observed at · UTC'],observed_at_beijing:['北京观察时间','Observed at · Beijing'],last_present_at_utc:['最后存在 · UTC','Last present · UTC'],first_missing_at_utc:['首次缺失 · UTC','First missing · UTC'],evidence_level:['证据等级','Evidence level'],source_kind:['来源类别','Source kind']};
+  const rows=(state.reset_events||[]).map(row=>{const card=element('article','','reset-event');card.dataset.patchKey='reset:'+(row.event_id||row.id);card.append(element('h3',(eventNames[row.event_type]||[row.event_type||'未知',row.event_type||'Unknown'])[language==='en'?1:0]),element('p',row.summary||''));for(const field of ['observed_at_utc','observed_at_beijing','last_present_at_utc','first_missing_at_utc','evidence_level','source_kind'])card.append(element('p',fieldNames[field][language==='en'?1:0]+': '+(field==='evidence_level'&&language==='zh'?({observed:'已观察',estimated:'估算',unknown:'未知'}[row[field]]||row[field]||'未知'):(row[field]??phrase('未知','Unknown')))));return card;});
+  PanelPatch.children($('reset-events'),rows.length?rows:[element('p',phrase('尚无重置观察事件；这不证明从未发生重置','No reset observation events recorded; this does not prove that no reset occurred'),'empty-caption')]);
+}
+
+$('memory-sort').addEventListener('change',()=>{if(lastState)renderMemory(lastState);});
+
+function renderRecoveredEvidence(state){
+  const data=state.recovered_evidence||{},events=data.events||[];
+  $('recovered-evidence-title').textContent=phrase('证据补录历史','Evidence-supplemented history')+' · '+events.length;
+  $('recovered-evidence-note').textContent=phrase('原字节基线保留 15 个任务。后续事实是证据补录，不代表原记录完整恢复；未知 task/run 不推测归属。助手报告不等于用户验收。基线截止：','The original byte-level baseline contains 15 tasks. Later facts are evidence supplements, not complete original history. Unknown task/run mappings remain unknown. Assistant reports are not user acceptance. Baseline cutoff: ')+(data.baseline_cutoff_utc||'unknown');
+  PanelPatch.children($('recovered-evidence-list'),events.map(row=>{const card=element('article','','reset-event');card.dataset.patchKey=row.evidence_id;card.append(element('h3',row.topic||''),element('p',row.fact_summary||''));for(const field of ['source_observed_at_utc','source_observed_at_beijing','evidence_level','remaining_unknown','known_original_task_id','known_original_run_id'])card.append(element('p',field+': '+(field==='evidence_level'?({user_instruction:phrase('用户指令','User instruction'),assistant_report:phrase('助手报告（非用户验收）','Assistant report (not acceptance)')}[row[field]]||row[field]||'unknown'):(row[field]??'unknown'))));return card;}));
+}
+
+$('conversation-new').addEventListener('click',()=>{if(!conversationRead.pending)return;conversationRead.data=conversationRead.pending;conversationRead.pending=null;$('conversation-new').hidden=true;const view=captureView(conversationTask);renderConversationStream(lastState,conversationTask);restoreView(view,conversationTask);});
+
+$('requirement-preview-close').addEventListener('click',()=>closeRequirementPreview());
+$('requirement-preview').addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeRequirementPreview();}});

@@ -108,8 +108,9 @@ class SkillCatalogTests(unittest.TestCase):
         viewer.language = 'en'
         viewer.panel = viewer.bg = viewer.muted = viewer.fg = viewer.accent = '#000'
         viewer.live_updates=[]
-        widget = lambda *a, **k: SimpleNamespace(pack=lambda **kw: None, pack_forget=lambda: None, configure=lambda **kw:None, destroy=lambda:None, card_items=[], reflow_cards=lambda:None)
+        widget = lambda *a, **k: SimpleNamespace(pack=lambda **kw: None, pack_forget=lambda: None, configure=lambda **kw:None, grid=lambda **kw:None, columnconfigure=lambda *a,**kw:None, destroy=lambda:None, card_items=[], reflow_cards=lambda:None)
         viewer.tk = SimpleNamespace(Frame=widget)
+        viewer.bundled_badge = lambda parent: widget()
         viewer.scroll_area = widget
         viewer.card_grid = lambda *a, **kw: widget()
         viewer.expanded_skills = {"example", "second"}

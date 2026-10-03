@@ -41,6 +41,7 @@ class LauncherTests(unittest.TestCase):
 
     def test_startup_timeout_terminates_child(self):
         with tempfile.TemporaryDirectory() as temp, patch.object(launcher.sys, 'argv', ['desktop.py', 'start', '--data-dir', temp]), patch.object(launcher, 'health', return_value=False), patch.object(launcher.subprocess, 'Popen') as spawn, patch.object(launcher.time, 'sleep'):
+            launcher.Store(temp)  # Explicit fixture initialization; launcher readers never bootstrap.
             spawn.return_value.poll.return_value = None
             with self.assertRaises(RuntimeError): launcher.main()
             spawn.return_value.terminate.assert_called_once()
@@ -48,11 +49,13 @@ class LauncherTests(unittest.TestCase):
 
     def test_different_runtime_service_is_not_reused(self):
         with tempfile.TemporaryDirectory() as temp, patch.object(launcher.sys, 'argv', ['desktop.py', 'start', '--data-dir', temp]), patch.object(launcher, 'health', return_value=True), patch.object(launcher.subprocess, 'Popen') as spawn:
+            launcher.Store(temp)
             with self.assertRaises(SystemExit): launcher.main()
             spawn.assert_not_called()
 
     def test_native_open_is_network_free(self):
         with tempfile.TemporaryDirectory() as temp, patch.object(launcher.sys, 'argv', ['desktop.py', 'open', '--data-dir', temp]), patch.object(launcher.os, 'execvpe', side_effect=SystemExit) as execute, patch.object(launcher, 'health') as health, patch.object(launcher.os, 'dup2') as redirect:
+            launcher.Store(temp)
             with self.assertRaises(SystemExit): launcher.main()
             health.assert_not_called()
             self.assertIn('dots_panel.desktop_view', execute.call_args[0][1])

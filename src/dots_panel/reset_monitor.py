@@ -89,7 +89,8 @@ class DirectoryMonitor:
         finally:os.close(parent)
         self.db=None
         try:
-            self.db=sqlite3.connect(self.path.as_uri()+'?mode=rw',uri=True)
+            from .sqlite_bound import connect_bound
+            self.db=connect_bound(self.path,self.identity,mode='rw')
             self._validate_state()
         except BaseException:
             if self.db is not None:self.db.close()
@@ -121,7 +122,12 @@ class DirectoryMonitor:
                             event('inspection_error',label,'Directory identity inspection failed: '+current.get('error','unknown'),'unknown')
                     elif current['state']=='missing':
                         if not old:event('initial_absent',label,'Directory was absent at first observation; disappearance time unknown','unknown',first_missing_at=now)
-                        elif old['state']=='present':event('path_missing',label,'Directory became inaccessible between the last present and first missing observations; whole-machine reset is unproven',last_present_at=old.get('last_present_at',previous['observed_at']),first_missing_at=now,previous_identity=old['identity'])
+                        elif old['state']=='present':
+                            last_present=old.get('last_present_at',previous['observed_at'])
+                            if last_present<=now:
+                                event('path_missing',label,'Directory became inaccessible between the last present and first missing observations; whole-machine reset is unproven',last_present_at=last_present,first_missing_at=now,previous_identity=old['identity'])
+                            else:
+                                event('path_missing',label,'Directory is now missing, but wall-clock rollback prevents a reliable ordered disappearance interval; whole-machine reset is unproven','unknown',first_missing_at=now,previous_identity=old['identity'])
                     else:
                         if not old:event('baseline_present',label,'Directory identity recorded; this is a baseline observation',current_identity=current['identity'])
                         elif old['state']!='present':event('path_reappeared',label,'Directory is readable again; this does not establish the cause of the prior interruption',current_identity=current['identity'])

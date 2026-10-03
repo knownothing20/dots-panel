@@ -16,6 +16,7 @@ import webbrowser
 SOURCE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SOURCE / "src"))
 from dots_panel.app import Store
+from dots_panel.desktop_view import ReadOnlyStore
 
 
 def private_file(path, mode):
@@ -65,7 +66,12 @@ def main():
     parser.add_argument("--web", action="store_true", help="Use the web browser instead of the default local native viewer")
     parser.add_argument("--python", dest="native_interpreter", help="Explicit Python 3.10+ interpreter for the native desktop viewer")
     args = parser.parse_args()
-    store = Store(args.data_dir)
+    if args.action == "health":
+        print("healthy" if health(args.port) else "offline")
+        return
+    store = Store(args.data_dir) if args.action == "install" else ReadOnlyStore(args.data_dir)
+    if args.action != "install":
+        store.snapshot()  # Validate the complete existing schema before logs or execution.
     pidfile = store.directory / "run/server.json"
     command = [sys.executable, "-m", "dots_panel", "--data-dir", str(store.directory), "serve", "--port", str(args.port)]
     if args.action == "install":

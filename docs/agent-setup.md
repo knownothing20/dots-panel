@@ -47,7 +47,7 @@ sh "$SOURCE/scripts/start.sh" --help
 sh "$SOURCE/scripts/start.sh" --data-dir "$DATA" doctor
 ```
 
-Python 3.10+；Tkinter 是可选标准库组件，原生视图要求它和实际图形桌面。没有 Tk 时不要声称原生安装可用，也不要擅自安装系统依赖。`doctor` 只读，不初始化 DATA；初装时 missing 正常。`status` 和其他本地 CLI 会初始化/迁移表，因此旧 DATA 应先备份。
+Python 3.10+；Tkinter 是可选标准库组件，原生视图要求它和实际图形桌面。没有 Tk 时不要声称原生安装可用，也不要擅自安装系统依赖。`doctor` 只读，不初始化 DATA；初装时 missing 正常。`status`、timeline、serve 和其他只读 CLI 不初始化或迁移；明确授权的 `init` 才初始化/迁移，旧 DATA 应先备份。
 
 在**目标桌面自己的终端**核对 `id -u`、`printf '%s\n' "$HOME" "$DISPLAY"`、解释器和 SOURCE 可见性，仅用于私下确认，不抄到公开报告。默认安装器优先已有且可用的系统 Python/Tk；需要时用经过核验的 `--python`。详细字体检查见 [安装文档](install.md)。
 
@@ -267,7 +267,7 @@ Schema 约束以 `platform_schedules.py`、`result_links.py` 为准。输入上�
 3. SQLite 通过只读连接调用 `sqlite3.Connection.backup()`，以一致性快照中的任务/成果记录选择文件。默认 `strict-live` 要求捕获期间数据库未变化；显式 `--capture-mode database-snapshot-cutoff` 允许快照之后的数据库进展写入留到下一次。两种模式仍重新核验所选文件、路径身份、大小和哈希；不是跨目录事务，也无需为普通数据库进展停止无关工作
 4. 按协议纳入所选 SOURCE、配置、登记成果、输入和显式 checkpoint；排除日志、PID、缓存、凭据、递归旧备份和未选择的临时文件。生成全量成员清单，验证 SQLite integrity/foreign-key check 及全部内容依赖，先做隔离恢复演练
 5. 在用户授权的私有 Library 目的地上传所需文件，逐项核验返回值与下载字节，最后使用既有索引身份及精确版本执行 CAS 替换。平台外部定时任务可串行调用此流程；离线模块和面板本身不建立或执行该定时任务
-6. 恢复仅写**新的私有目录**；运行固定哈希的独立恢复器并校验清单、全部依赖、SQLite、任务/成果关联，再在隔离副本上检查 doctor/status 兼容性。status 可能迁移旧库，不用于无改动证明；不执行恢复出的旧 PID 文件
+6. 恢复仅写**新的私有目录**；运行固定哈希的独立恢复器并校验清单、全部依赖、SQLite、任务/成果关联，再在隔离副本上检查 doctor/status 兼容性。status 只读且不迁移；显式 init 迁移仅在隔离副本测试；不执行恢复出的旧 PID 文件
 7. 重新核对平台任务与执行者当前状态；旧 running/idle 都只是历史观察。恢复不复制、创建、暂停或恢复平台计划。获得明确授权并完成验收后才将启动入口指向恢复目录
 
 以下只演示一致性 SQLite 副本校验（**不是完整 DATA 备份**），沿用本页 TESTDATA；目标不应已存在：

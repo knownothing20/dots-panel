@@ -1,5 +1,6 @@
 """Activity-related profiles only. Assignment records never prove live execution."""
 from .agent_identity import profile_short_ids
+from .execution_config import config_from_row
 
 
 def activity_participants(snapshot, task_id, now=None):
@@ -25,7 +26,7 @@ def activity_participants(snapshot, task_id, now=None):
         candidates=[a for a in candidates if isinstance(a.get('assigned_at'),(int,float)) and not isinstance(a['assigned_at'],bool) and 0<=a['assigned_at']<=now]
         if not candidates:continue
         assignment=max(candidates,key=lambda a:(a['assigned_at'],a.get('id','')))
-        rows.append({'agent':agents[key],'short_id':keys[key],'assignments':[{'run_id':run['id'],'work_type':assignment.get('work_type','unspecified'),'assigned_at':assignment['assigned_at'],'source':'run'}]})
+        rows.append({'agent':agents[key],'short_id':keys[key],'assignments':[{'run_id':run['id'],'work_type':assignment.get('work_type','unspecified'),'assigned_at':assignment['assigned_at'],'source':'run','execution_config':config_from_row(assignment)}]})
     rows.sort(key=lambda r:(-r['assignments'][0]['assigned_at'],r['agent']['id']))
     return rows
 

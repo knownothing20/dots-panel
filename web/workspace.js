@@ -114,7 +114,7 @@ globalThis.PanelAgents = {
       const candidates=(episodes.has(id)?episodes.get(id).filter(a=>a.ended_at==null):links.get(id)).filter(a=>typeof a.assigned_at==='number'&&Number.isFinite(a.assigned_at)&&a.assigned_at>=0&&a.assigned_at<=now);
       if(!candidates.length)continue;
       const assignment=candidates.slice().sort((a,b)=>b.assigned_at-a.assigned_at||(b.id||'').localeCompare(a.id||''))[0];
-      rows.push({agent:agents.get(id),assignments:[{run_id:run.id,work_type:assignment.work_type||'unspecified',assigned_at:assignment.assigned_at,source:'run'}]});
+      rows.push({agent:agents.get(id),assignments:[{run_id:run.id,work_type:assignment.work_type||'unspecified',assigned_at:assignment.assigned_at,source:'run',execution_config:Object.fromEntries(['requested_model','requested_effort','actual_model','actual_effort','config_verification','config_provider','config_observed_at','config_evidence'].map(k=>[k,assignment[k]??(k==='config_verification'?'unknown':null)]))}]});
     }
     return rows.sort((a,b)=>b.assignments[0].assigned_at-a.assignments[0].assigned_at||a.agent.id.localeCompare(b.agent.id));
   },
@@ -255,7 +255,7 @@ globalThis.PanelCollaboration = {
   },
   actor(row,state,language='zh') {
     const a=row.attribution;
-    if(!a?.agent_id)return {known:false,label:language==='en'?'Anonymous':'匿名',role:language==='en'?'Role unrecorded':'职责未记录',color:'#f3f4ef',agent:null,id:'unattributed'};
+    if(!a?.agent_id)return {known:false,label:row.role==='system'||row.kind==='requirement'?(language==='en'?'System record':'系统记录'):(language==='en'?'Historical author unknown':'历史作者未知'),role:language==='en'?'Role unrecorded':'职责未记录',color:'#f3f4ef',agent:null,id:'unattributed'};
     const key=/^[a-f0-9]{8}$/i.test(a.color_key||'')?a.color_key:'00000000';
     const agent={id:a.agent_id,name:a.actor_name||'',name_en:a.actor_name_en||'',portrait:a.portrait||'',portrait_spec:a.portrait_spec,panel_short_id:a.actor_short_id||(language==='en'?'ID unrecorded':'编号未记录')};
     return {known:true,label:(language==='en'&&a.actor_name_en)||a.actor_name||agent.panel_short_id,shortId:agent.panel_short_id,role:PanelAgents.type(a.work_type||'unspecified',language),color:this.palette[parseInt(key,16)%this.palette.length],agent,id:a.agent_id,assignmentId:a.assignment_id,workType:a.work_type||'unspecified'};

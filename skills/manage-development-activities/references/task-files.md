@@ -53,3 +53,12 @@ For an MP4 deliverable, use `artifact-add` with `--kind video` and its unchanged
 Both native and Web viewers show video metadata only: registration does not start playback, serve an HTTP video download, or prove chat delivery. Keep each revision as a separate artifact. Record draft/final designation and actual Library/chat delivery evidence separately, using the matching artifact hash and verified Library identity.
 
 Check the activity's output count and file-list entry after registration. In the native viewer, the supported output-folder action opens the verified managed folder for that exact task on the cloud desktop. It does not open the user's local computer, execute the video, or grant public access. Use only the installed canonical-folder action; do not build an arbitrary path or shell command from a title. The Web view offers metadata/file-list navigation and must not pretend to provide the native folder action or a download. Counts and folder visibility are convenience checks, not evidence that the user received or opened a deliverable.
+
+
+## Link verified outputs to their requirement
+
+When a handoff includes a verified requirement ID, retain it alongside the same activity/run. After artifact-add returns a real artifact ID and the task file list confirms it, use requirement-link with link-kind artifact and target-type artifact to record that explicit association. Do not infer a requirement from filename, nickname, timestamp or the latest run. Keep source IDs stable for retries. The link is evidence of association only: archival and delivery do not themselves change a requirement to completed; the coordinator records pending acceptance and later real acceptance separately.
+
+## Synchronization verification artifacts
+
+Keep atomic intake/replay, duplicate, conflict, out-of-order, restart and local UI latency fixtures in isolated DATA. Never add test requirements to production. Record source-message-to-intake latency separately from database-event-to-UI rendering; a local speed result does not prove automatic chat delivery. Archive actual test output and limitations before presenting a synchronization change as verified. UI unread state under config is application state, not a deliverable or acceptance record.

@@ -41,7 +41,7 @@ function domCase(reduced,run){
  const advance=ms=>{const stop=now+ms;let steps=0;while(jobs.size){const [id,job]=[...jobs].sort((a,b)=>a[1].at-b[1].at||a[0]-b[0])[0];if(job.at>stop)break;jobs.delete(id);now=job.at;job.fn();if(++steps>10000)throw Error('Timer loop');}now=stop;};
  try{
   let selected=null,intent=null;const detail=new Node('section',doc);doc.body.append(detail);detail.focus();const portraits=[];
-  const c=new PanelNotifications.Controller({document:doc,language:()=> 'en',avatar:agent=>{portraits.push(agent);const node=new Node('span',doc);node.className='agent-avatar fixed-portrait';node.agent=agent;return node;},openTask:(id,options)=>{selected=id;intent=options;if(options.keyboard)detail.focus();}});c.deadline.now=()=>now;
+  const c=new PanelNotifications.Controller({document:doc,language:()=> 'en',avatar:agent=>{portraits.push(agent);const node=new Node('span',doc);node.className='agent-avatar fixed-portrait';node.agent=agent;return node;},openTask:(id,options)=>{selected=id;intent=options;if(options.keyboard)detail.focus();return true;}});c.deadline.now=()=>now;
   const s=base();c.observe(s);
   const add=(id='r')=>{s.runs.push({id,task_id:'t',status:'running'});s.agents=[{id:'a',name:'Example',name_en:'Example EN',status:'running',portrait:'bloom-mint',portrait_spec:{key:'bloom-mint',shapes:[]}}];s.agent_run_assignments.push({run_id:id,agent_id:'a'});return c.observe(s);};
   run({c,doc,navs,detail,portraits,s,add,advance,jobs,getSelected:()=>selected,getIntent:()=>intent});c.destroy();advance(1000);assert.equal(jobs.size,0);assert.equal(Object.keys(doc.listeners).length,0);
@@ -92,3 +92,5 @@ assert.match(app,/avatar:agentAvatar/);assert.match(app,/if\(keyboard\)\$\('deta
 console.log('Shared avatar and input modality glue, hidden surface, button grid, and uniform unread dot styles passed');
 
 assert.match(css,/notification-badge\[hidden\]\{display:none!important/);
+// A failed or unconfirmed open must never acknowledge unread items.
+domCase(false,({c,add})=>{add();const before=c.state.counts().conversations;c.openTask=()=>false;c.action.listeners.click();assert.equal(c.state.counts().conversations,before);c.openTask=()=>{throw Error('Synthetic render failure');};c.action.listeners.click();assert.equal(c.state.counts().conversations,before);assert.match(c.hint.textContent,/kept unread/);c.openTask=()=>true;c.action.listeners.click();assert.equal(c.state.counts().conversations,0);});

@@ -83,7 +83,7 @@ globalThis.PanelLocale = (() => {
     '轻量运行，边界清晰':'Lightweight, clear boundaries','正在连接':'Connecting','让工作，清晰可见':'See your work clearly',
     '机器状态、任务进度和真实记录，在一个安静的地方。':'Machine health, task progress and real records in one quiet place.',
     '↻ 刷新数据':'↻ Refresh','当前执行环境':'Current execution environment','读取中…':'Loading…','尚未采样':'Not sampled yet',
-    '可见视图':'Visible scope','等待采样':'Waiting for sample','内存':'Memory','读取中':'Loading','磁盘':'Disk','数据所在卷':'Data volume',
+    '证据补录历史':'Evidence-supplemented history','全部需求':'All requirements','排序':'Sort','◆ Panel 配套':'◆ Panel bundled','可见视图':'Visible scope','等待采样':'Waiting for sample','内存':'Memory','读取中':'Loading','磁盘':'Disk','数据所在卷':'Data volume',
     '运行环境':'Environment','本机':'Local','零外部依赖':'No external dependencies',
     '只展示主动登记的项目任务，不会扫描或导入其他任务。':'Only explicitly registered tasks. No scanning or automatic imports.',
     '本地 CLI 接入':'Local CLI integration','任务 / 项目':'Task / project','最近状态':'Latest state','最近更新':'Last updated','运行 ID':'Run ID',

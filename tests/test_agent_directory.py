@@ -110,7 +110,7 @@ class AgentDirectoryTests(unittest.TestCase):
 class ActivityParticipantViewTests(unittest.TestCase):
     def test_agent_page_and_shortcut_target_removed(self):
         from dots_panel.desktop_view import PAGE_NAMES
-        self.assertNotIn('agents',PAGE_NAMES);self.assertEqual(len(PAGE_NAMES),7)
+        self.assertNotIn('agents',PAGE_NAMES);self.assertEqual(len(PAGE_NAMES),9);self.assertIn('memory',PAGE_NAMES);self.assertIn('reset',PAGE_NAMES)
         self.assertFalse(hasattr(Dashboard,'render_agents'))
 
 class UnfinishedRunSummaryTests(unittest.TestCase):

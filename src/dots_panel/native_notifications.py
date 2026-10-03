@@ -114,8 +114,8 @@ class NativeNotifications:
             self.cancel('animate')
             self.draw()
 
-    def mark_read(self, page, task_id=None):
-        self.state.clear(page, task_id)
+    def mark_read(self, page, task_id=None, requirement_id=None):
+        self.state.clear(page, task_id, requirement_id)
         self.badges()
         if not self.state.cards:
             self.expanded = False
@@ -170,15 +170,31 @@ class NativeNotifications:
         if not self.state.cards:
             return
         keyboard = self.input_mode == 'keyboard'
-        task_id = self.state.cards[0]['task_id']
-        self.mark_read('conversations', task_id)
-        self.view.page, self.view.selected_task, self.view.detail_scroll = 'conversations', task_id, 0.0
-        self.view.render_page()
+        card = dict(self.state.cards[0])
+        task_id = card['task_id']
+        try:
+            if card.get('requirement_id'):
+                visible = self.view.open_requirement(card['requirement_id'])
+                if visible is not True:
+                    return
+            else:
+                self.view.page, self.view.selected_task, self.view.detail_scroll = 'conversations', task_id, 0.0
+                self.view.render_page()
+            if hasattr(self.root, 'update_idletasks'):
+                self.root.update_idletasks()
+            target = getattr(self.view, 'page_scroll', None) or getattr(self.view, 'page_title', None)
+            if target is None or not target.winfo_exists() or not target.winfo_ismapped():
+                return
+            self.open_error = None
+            self.mark_read('conversations', task_id, card.get('requirement_id'))
+        except Exception as exc:
+            # A Tcl/widget/rendering failure is not successful viewing.
+            self.open_error = 'Unable to open activity; kept unread: ' + str(exc)
+            self.draw()
+            return
         def complete_action():
-            if keyboard:
-                target = getattr(self.view, 'page_scroll', None) or getattr(self.view, 'page_title', None)
-                if target is not None and target.winfo_exists() and target.winfo_ismapped():
-                    target.focus_set()
+            if keyboard and target.winfo_exists() and target.winfo_ismapped():
+                target.focus_set()
             if self.expanded:
                 self.deadline.reset()
                 self.sync_pause()
@@ -260,12 +276,17 @@ class NativeNotifications:
         en=view.language=='en'
         def text(x,y,value,size=14,color='#244A42',bold=False):
             self.canvas.create_text(x,y,text=value,anchor='nw',fill=color,font=(view.font,-size,'bold' if bold else 'normal'))
-        text(89,18,'Task assigned' if en else '新的任务已分派',12,'#6C8D6D',True)
+        kicker = (('Requirement update · ' if en else '需求更新 · ') + card.get('status','received')) if card.get('kind') == 'requirement' else ('Task assigned' if en else '新的任务已分派')
+        text(89,18,kicker,12,'#6C8D6D',True)
         text(89,40,view.cut_text(card['title'],width-122,17,True),17,bold=True)
         person=card.get('agent_record') or {}
         agent=(person.get('name_en') if en else None) or card['agent']
         agent += f' +{card["participants"]-1}' if card['participants']>1 else ''
-        text(89,69,view.cut_text(('Assigned: ' if en else '已登记分派 · ')+agent,width-250,12),12,'#718770')
+        prefix = ('Owner: ' if en else '负责人 · ') if card.get('kind') == 'requirement' else ('Assigned: ' if en else '已登记分派 · ')
+        text(89,69,view.cut_text(prefix+agent,width-250,12),12,'#718770')
+        warning = getattr(self, 'open_error', None) or self.state.storage_error
+        if warning:
+            text(22,104,view.cut_text(warning,width-45,10),10,'#9B4C38')
         self.controls['close'].configure(text='×',font=(view.font,-18),bg='#FFFDF7')
         self.controls['close'].place(x=width-37,y=10,width=26,height=25)
         self.controls['progress'].configure(text='View progress →' if en else '查看进度 →',bg='#244A42',fg='white',activebackground='#365D47',activeforeground='white')

@@ -32,7 +32,7 @@ backup run pass.
    schema/table counts, installation identity, and registered artifact coverage.
    Retain the actual verification result with its observation time and limits.
 5. Use the matching source version to run read-only `doctor` with an absolute
-   DATA path. Test `status` or migration-capable commands on a separate copy;
+   DATA path. Use read-only `status`; test explicit `init` migration on a separate copy;
    they may change older database schemas. Check the user interface separately
    when a graphical desktop is available. Test counts belong to that actual
    validation run and are not pre-filled guarantees.

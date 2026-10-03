@@ -89,7 +89,7 @@ for(const lang of ['en','zh']){
  assert.equal(t('查看自动化'),lang==='en'?'View automations':'查看自动化');
  assert.equal(t('所有任务 / 进度记录'),lang==='en'?'All tasks / progress records':'所有任务 / 进度记录');
 }
-const sourceName='历史活动与定时任务';item.name=sourceName;renderSchedules([item]);assert.equal($('schedule-cards').children[0].children[0].textContent,sourceName,'User-authored names stay verbatim');
+const sourceName='历史活动与定时任务';item.name=sourceName;renderSchedules([item]);assert.equal($('schedule-cards').children[0].children[0].children[0].textContent,sourceName,'User-authored names stay verbatim');
 renderSchedules([]);assert($('schedule-cards').children.length>0);
 
 `,context);

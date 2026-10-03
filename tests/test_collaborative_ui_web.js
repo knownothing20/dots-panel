@@ -59,7 +59,7 @@ assert.equal(PanelCollaboration.rows(fixture,'project',{agent:'unattributed'}).l
 assert.equal(PanelCollaboration.rows(fixture,'project',{role:'review',task:'child'}).length,2);
 assert.equal(PanelCollaboration.rows(fixture,'project',{task:'other'}).length,0);
 assert.equal(PanelCollaboration.rows(fixture,'project',{includeChildren:false}).length,1);
-assert.equal(PanelCollaboration.mode({},'en'),'Unclassified');assert.equal(PanelCollaboration.actor(fixture.activity[0],fixture,'en').label,'Anonymous');
+assert.equal(PanelCollaboration.mode({},'en'),'Unclassified');assert.equal(PanelCollaboration.actor(fixture.activity[0],fixture,'en').label,'Historical author unknown');
 lastState=fixture;renderConversationStream(fixture,'project');
 const messages=$('project-activity').children;assert.equal(messages.length,3);assert(messages.every(n=>n.tag==='article'));assert.equal(messages[1].children[0].children[0].children[0].tag,'svg','Event portrait uses shared native SVG spec');
 assert(messages[1].children.some(n=>n.textContent==='<script>Literal text</script>'),'User text stays literal');

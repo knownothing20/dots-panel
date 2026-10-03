@@ -256,7 +256,11 @@ from .recovery_support import RecoveryStoreMixin, recovery_notice
 from .collaborative_activity import (CollaborationStoreMixin, migrate as migrate_collaboration,
     validate_structure, assignment_context, attribute, decorate, guard_project_closeout)
 
-class Store(CollaborationStoreMixin, RecoveryStoreMixin):
+from .requirements import RequirementStoreMixin, migrate as migrate_requirements, feed as requirement_feed
+from .followup import FollowupStoreMixin, migrate as migrate_followup
+from .reset_events import ResetStoreMixin, migrate as migrate_reset, read_events as read_reset_events, monitor_status as reset_monitor_status
+
+class Store(ResetStoreMixin, FollowupStoreMixin, RequirementStoreMixin, CollaborationStoreMixin, RecoveryStoreMixin):
     def __init__(self, directory):
         requested = Path(directory).expanduser().absolute()
         if any(p.is_symlink() for p in (requested, *requested.parents)):
@@ -402,17 +406,66 @@ class Store(CollaborationStoreMixin, RecoveryStoreMixin):
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS binding_source_thread ON task_bindings(source_type,thread_id)")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS activity_source_event ON activity(task_id,source_event_id) WHERE source_event_id IS NOT NULL")
             migrate_collaboration(db)
+            migrate_requirements(db)
+            migrate_followup(db)
+            migrate_reset(db)
+
+    @classmethod
+    def existing_writer(cls, directory):
+        """Attach an already installed ledger without initialization or migration."""
+        store = cls.__new__(cls)
+        requested = Path(directory).expanduser().absolute()
+        if any(path.is_symlink() for path in (requested, *requested.parents)):
+            raise ValueError("Runtime directory must not contain symlinks")
+        store.directory = requested.resolve()
+        store.path = store.directory / "db/panel.sqlite3"
+        # Validation uses an existing-only connection and never mkdir/touches DATA.
+        with store.connect() as db:
+            db.execute("SELECT name FROM sqlite_master LIMIT 1").fetchall()
+        return store
 
     @contextmanager
     def connect(self):
-        db = sqlite3.connect(self.path, timeout=10)
+        from .sqlite_bound import connection_scope
+        with connection_scope(self) as db:
+            yield db
+
+    @contextmanager
+    def _connect_fresh(self):
+        # Initialization is explicit in __init__. A deleted live database must
+        # fail here, never silently become an empty database via SQLite defaults.
+        for target in (self.directory, self.path.parent):
+            if any(path.is_symlink() for path in (target, *target.parents)):
+                raise ValueError("Runtime directory must not contain symlinks")
+            info = target.stat()
+            if not stat.S_ISDIR(info.st_mode) or info.st_mode & 0o077:
+                raise ValueError("Runtime directories must be private directories")
+        handle = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        db = None
         try:
+            info = os.fstat(handle)
+            identity = (info.st_dev, info.st_ino)
+            if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
+                raise ValueError("Database must be a private regular file")
+            def check_identity():
+                current = self.path.stat(follow_symlinks=False)
+                if not stat.S_ISREG(current.st_mode) or (current.st_dev, current.st_ino) != identity:
+                    raise ValueError("Database path changed during connection")
+            check_identity()
+            mode = "ro" if getattr(self, "read_only", False) else "rw"
+            from .sqlite_bound import connect_bound
+            db = connect_bound(self.path, identity, mode=mode, timeout=10)
+            check_identity()
             db.row_factory = sqlite3.Row
             db.execute("PRAGMA foreign_keys=ON")
+            if mode == "ro":db.execute("PRAGMA query_only=ON")
             with db:
                 yield db
+                check_identity()
         finally:
-            db.close()
+            if db is not None:
+                db.close()
+            os.close(handle)
 
     def register(self, key, name, project, tracking_mode="manual", activity_kind="task", collaboration_mode="single", parent_task_id=None):
         if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", key):
@@ -1017,9 +1070,10 @@ class Store(CollaborationStoreMixin, RecoveryStoreMixin):
                        "ON CONFLICT(id) DO UPDATE SET " + ",".join(k + "=excluded." + k for k in columns if k != "id"), tuple(values.values()))
         return {"id": key, "duplicate": False}
 
-    def snapshot(self, stale_seconds=120):
+    def snapshot(self, stale_seconds=120, selected_task_id=None):
         now = time.time()
         with self.connect() as db:
+            db.execute("BEGIN")  # One consistent read view across cards, counters and full feed.
             tasks = [dict(r) for r in db.execute("SELECT tasks.*, (SELECT status FROM runs WHERE task_id=tasks.id ORDER BY started DESC, id DESC LIMIT 1) AS latest_status FROM tasks ORDER BY created DESC LIMIT 500")]
             runs = [dict(r) for r in db.execute("SELECT * FROM runs ORDER BY started DESC,id DESC LIMIT 100")]
             # Keep the latest run for every visible task even outside the history window.
@@ -1033,6 +1087,30 @@ class Store(CollaborationStoreMixin, RecoveryStoreMixin):
             attach_observations(db, schedules)
             tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             progress_updates = [dict(r) for r in db.execute("SELECT * FROM progress_updates ORDER BY created DESC,id DESC LIMIT 500")] if "progress_updates" in tables else []
+            if selected_task_id is not None:
+                selected = db.execute("SELECT tasks.*, (SELECT status FROM runs WHERE task_id=tasks.id ORDER BY started DESC,id DESC LIMIT 1) AS latest_status FROM tasks WHERE id=?", (selected_task_id,)).fetchone()
+                if not selected:
+                    raise ValueError("Unknown selected activity")
+                if not any(t['id'] == selected_task_id for t in tasks):
+                    tasks.append(dict(selected))
+                def extend_unique(rows, query, params):
+                    seen = {row['id'] for row in rows}
+                    rows.extend(dict(row) for row in db.execute(query, params) if row['id'] not in seen)
+                extend_unique(runs, "SELECT * FROM runs WHERE task_id=? ORDER BY started DESC,id DESC", (selected_task_id,))
+                extend_unique(latest_runs, "SELECT * FROM runs WHERE task_id=? ORDER BY started DESC,id DESC LIMIT 1", (selected_task_id,))
+                extend_unique(open_runs, "SELECT * FROM runs WHERE task_id=? AND status IN ('running','waiting_user','waiting_external','paused','awaiting_review') ORDER BY started DESC,id DESC", (selected_task_id,))
+                extend_unique(activity, "SELECT * FROM activity WHERE task_id=? ORDER BY created DESC,id DESC", (selected_task_id,))
+                extend_unique(events, "SELECT e.* FROM events e JOIN runs r ON r.id=e.run_id WHERE r.task_id=? ORDER BY e.id DESC", (selected_task_id,))
+                if 'progress_updates' in tables:
+                    extend_unique(progress_updates, "SELECT p.* FROM progress_updates p JOIN runs r ON r.id=p.run_id WHERE r.task_id=? ORDER BY p.created DESC,p.id DESC", (selected_task_id,))
+                if not any(b['task_id'] == selected_task_id for b in bindings):
+                    bindings.extend(dict(row) for row in db.execute("SELECT * FROM task_bindings WHERE task_id=?", (selected_task_id,)))
+            reset_events = read_reset_events(db)
+            requirement_data = requirement_feed(db)
+            if requirement_data['requirement_stream_id']:
+                identity = self.path.stat()
+                requirement_data['requirement_stream_id'] = hashlib.sha256((requirement_data['requirement_stream_id'] + ':' + str(self.path.resolve()) + ':' + str(identity.st_dev) + ':' + str(identity.st_ino)).encode()).hexdigest()
+            installation_observations = [dict(row) for row in db.execute("SELECT * FROM installation_observations ORDER BY recorded_at,id")] if 'installation_observations' in tables else []
             rules_row = db.execute("SELECT skill_url FROM rules_config WHERE id=1").fetchone() if "rules_config" in tables else None
             rules = project_rules()
             rules["skill_url"] = rules_row["skill_url"] if rules_row else None
@@ -1096,7 +1174,11 @@ class Store(CollaborationStoreMixin, RecoveryStoreMixin):
         current_runs = [run for task in tasks if (run := current_run(selection, task["id"], now)) is not None]
         from .exit_region import load as load_exit_region
         from .backup_status import load as load_backup_status
-        return {"backup": load_backup_status(self.directory, source=ROOT), "assignment_episodes":assignment_episodes, "event_attributions":event_attributions, "timeline_window":{"activity_total":activity_total,"event_total":event_total,"truncated":activity_total>len(activity) or event_total>len(events)}, "exit_region": load_exit_region(self.directory), "open_runs": open_runs, "current_runs": current_runs, "progress_updates": progress_updates, "output_summaries": outputs, "recovery": recovery_notice(self.directory), "rules": rules, "about": {"installed_version": VERSION, "install_notes": INSTALL_NOTES, "release": release, "doctor": install_doctor(ROOT, self.directory)}, "artifacts": artifacts, "agents": agents, "agent_assignments": agent_assignments, "agent_run_assignments": agent_run_assignments, "tasks": tasks, "runs": runs, "latest_runs": latest_runs, "closeouts": closeouts, "events": events, "activity": activity, "schedules": schedules, "software": software, "bindings": bindings, "stale_after_seconds": stale_seconds}
+        from .recovery_support import load_recovered_evidence
+        from .companion_sources import companion_snapshot, load_current_scheduler_bindings
+        current_companion_scheduler_bindings = load_current_scheduler_bindings(self.directory)
+        companions = companion_snapshot({"rules": rules, "schedules": schedules, "installation_observations": installation_observations, "current_companion_scheduler_bindings": current_companion_scheduler_bindings})
+        return {"recovered_evidence": load_recovered_evidence(self.directory), "current_companion_scheduler_bindings": current_companion_scheduler_bindings, "reset_events": reset_events, "reset_monitor_status": reset_monitor_status(self.directory), "companions": companions, **requirement_data, "installation_observations": installation_observations, "selected_task_id": selected_task_id, "backup": load_backup_status(self.directory, source=ROOT), "assignment_episodes":assignment_episodes, "event_attributions":event_attributions, "timeline_window":{"activity_total":activity_total,"event_total":event_total,"truncated":activity_total>len(activity) or event_total>len(events)}, "exit_region": load_exit_region(self.directory), "open_runs": open_runs, "current_runs": current_runs, "progress_updates": progress_updates, "output_summaries": outputs, "recovery": recovery_notice(self.directory), "rules": rules, "about": {"installed_version": VERSION, "install_notes": INSTALL_NOTES, "release": release, "doctor": install_doctor(ROOT, self.directory)}, "artifacts": artifacts, "agents": agents, "agent_assignments": agent_assignments, "agent_run_assignments": agent_run_assignments, "tasks": tasks, "runs": runs, "latest_runs": latest_runs, "closeouts": closeouts, "events": events, "activity": activity, "schedules": schedules, "software": software, "bindings": bindings, "stale_after_seconds": stale_seconds}
 
 
 
@@ -1111,6 +1193,8 @@ class Metrics:
     def __init__(self, disk_path):
         self.disk_path = disk_path
         self.previous = None
+        from .memory_processes import ProcessMemorySampler
+        self._process_memory_sampler = ProcessMemorySampler()
         self.lock = threading.Lock()
 
     def collect(self):
@@ -1144,6 +1228,8 @@ class Metrics:
             "os": platform.system(), "architecture": platform.machine(),
             "python": platform.python_version(), "visible_cpu_count": os.cpu_count(),
             "cpu_percent": cpu, "cpu_quota_cores": cpu_limit,
+            "process_memory": self._process_memory_sampler.sample(),
+            "memory_quota_state": "limited" if mem_limit_raw and mem_limit_raw.isdigit() else "unlimited" if mem_limit_raw == "max" else "unavailable",
             "memory_total": memory.get("MemTotal"),
             "memory_available": memory.get("MemAvailable"),
             "memory_quota": int(mem_limit_raw) if mem_limit_raw and mem_limit_raw.isdigit() else None,
@@ -1181,7 +1267,13 @@ def make_server(store, port=8765):
             path = urlsplit(self.path).path
             try:
                 if path == "/api/state":
-                    body = {"server_time": time.time(), "metrics": metrics.collect(), **store.snapshot()}
+                    query = parse_qs(urlsplit(self.path).query, keep_blank_values=True, max_num_fields=1)
+                    if set(query) - {'task_id'} or any(len(v) != 1 for v in query.values()):
+                        raise ValueError('Invalid state query')
+                    selected = query.get('task_id', [None])[0]
+                    if selected is not None and not re.fullmatch(r'[a-z0-9][a-z0-9_-]{0,63}', selected):
+                        raise ValueError('Invalid selected activity')
+                    body = {"server_time": time.time(), "metrics": metrics.collect(), **store.snapshot(selected_task_id=selected)}
                     self.send_body(200, json.dumps(body, ensure_ascii=False).encode())
                 elif path == "/api/collaboration-timeline":
                     query = parse_qs(urlsplit(self.path).query,keep_blank_values=True,max_num_fields=8)
@@ -1396,9 +1488,98 @@ def main():
     release.add_argument("--repo-url", required=True); release.add_argument("--release-status", choices=RELEASE_STATUSES, required=True)
     release.add_argument("--sync-status", choices=SYNC_STATUSES, required=True); release.add_argument("--checked-at", required=True)
     release.add_argument("--release-tag"); release.add_argument("--remote-commit")
-    subs.add_parser("status")
+    reset_bind = subs.add_parser("reset-bind", help="Bind verified local installation identity; no auto-bind")
+    reset_bind.add_argument("--expected-identity", required=True); reset_bind.add_argument("--evidence", required=True)
+    subs.add_parser("reset-list", help="Read-only recorded reset evidence")
+    reset_import = subs.add_parser("reset-import", help="Import explicit reset events; no monitor installation")
+    reset_import.add_argument("--file", type=Path, required=True)
+    reset_import.add_argument("--expected-identity", required=True)
+    checkpoint = subs.add_parser("followup-checkpoint", help="Explicit residual-scope record; never dispatches")
+    checkpoint.add_argument("run_id")
+    for field in ("goal-status", "remaining-scope", "blocker-class", "next-owner", "next-action", "recheck-condition", "evidence", "source-event-id", "observed-at"):
+        checkpoint.add_argument("--" + field, required=True)
+    audit = subs.add_parser("followup-audit", help="Read-only explicitly scoped responsibility audit")
+    audit.add_argument("--task-id", action="append", required=True, dest="task_ids")
+    audit.add_argument("--stale-after", type=int, default=3600)
+    audit.add_argument("--executor-observations", type=Path)
+    subs.add_parser("dispatch-plan", help="Read-only default model configuration; does not dispatch")
+    for command in ("requirement-list", "requirement-diagnose", "requirement-sync-status"):
+        req = subs.add_parser(command, help="Read-only recorded requirements; no migration or platform reads")
+        req.add_argument("task_id")
+        if command == "requirement-list":
+            req.add_argument("--scope", choices=("all", "open", "active", "completed", "cancelled"), default="all")
+    for command in ("requirement-create", "requirement-receive", "requirement-assign", "requirement-link", "requirement-transition"):
+        req = subs.add_parser(command, help="Explicit requirement record; never dispatches")
+        req.add_argument("task_id" if command in ("requirement-create", "requirement-receive") else "requirement_id")
+        req.add_argument("--source-event-id", required=True)
+        req.add_argument("--observed-at", required=True)
+        req.add_argument("--evidence", required=True)
+        if command in ("requirement-create", "requirement-receive"):
+            req.add_argument("--summary", required=True)
+        if command == "requirement-receive":
+            req.add_argument("--reason", required=True); req.add_argument("--next-step", required=True); req.add_argument("--run-id")
+        if command in ("requirement-create", "requirement-assign", "requirement-transition"):
+            req.add_argument("--assignment-id", required=command == "requirement-assign")
+        if command == "requirement-assign":
+            req.add_argument("--expected-owner-event-id", type=int, required=True)
+        if command == "requirement-link":
+            req.add_argument("--link-kind", choices=("run", "progress", "result", "artifact"), required=True)
+            req.add_argument("--target-type", choices=("run", "progress", "activity", "event", "artifact"), required=True)
+            req.add_argument("--target-id", required=True)
+        if command == "requirement-transition":
+            req.add_argument("--status", choices=("received", "in_progress", "pending_acceptance", "blocked", "completed", "cancelled"), required=True)
+            req.add_argument("--expected-event-id", type=int, required=True)
+            req.add_argument("--evidence-kind", required=True); req.add_argument("--evidence-ref", required=True); req.add_argument("--next-step", default="")
+    for field in ("requested-model", "requested-effort", "actual-model", "actual-effort", "config-provider", "config-observed-at", "config-evidence"):
+        run_assign.add_argument("--" + field)
+    run_assign.add_argument("--config-verification", choices=("unknown", "requested", "verified"), default="unknown")
+    subs.add_parser("init", help="Explicitly initialize or migrate authorized DATA; never called by readers")
+    subs.add_parser("status", help="Read-only snapshot; never initializes or migrates DATA")
     args = parser.parse_args()
     try:
+        if args.command in ("status", "timeline", "serve"):
+            from .desktop_view import ReadOnlyStore
+            reader = ReadOnlyStore(args.data_dir)
+            if args.command == "status":
+                print(json.dumps(reader.snapshot(), ensure_ascii=False, indent=2))
+            elif args.command == "timeline":
+                print(json.dumps(reader.collaboration_timeline(args.task_id,args.include_children,args.agent_id,args.work_type,args.child_task_id,args.limit,args.offset),ensure_ascii=False))
+            else:
+                # A read-only HTTP viewer is not a database initialization command.
+                reader.snapshot()
+                server = make_server(reader, args.port)
+                print(f"dots-panel: http://127.0.0.1:{server.server_port} (loopback only)", flush=True)
+                try:server.serve_forever()
+                except KeyboardInterrupt:pass
+                finally:server.server_close()
+            return
+        if args.command == "init":
+            initialized = Store(args.data_dir)
+            print(json.dumps({"initialized": True, "schema_migrated": True, "explicit_command": True}))
+            return
+        if args.command == "reset-list":
+            from .desktop_view import ReadOnlyStore
+            print(json.dumps(ReadOnlyStore(args.data_dir).reset_list(), ensure_ascii=False))
+            return
+        if args.command == "dispatch-plan":
+            from .execution_config import dispatch_plan
+            print(json.dumps(dispatch_plan()))
+            return
+        if args.command == "followup-audit":
+            from .desktop_view import ReadOnlyStore
+            observations = None
+            if args.executor_observations:
+                if args.executor_observations.stat().st_size > 1024 * 1024:
+                    raise ValueError("Executor observations file is too large")
+                observations = json.loads(args.executor_observations.read_text(encoding="utf-8"))
+            print(json.dumps(ReadOnlyStore(args.data_dir).followup_audit(args.task_ids, stale_seconds=args.stale_after, executor_observations=observations), ensure_ascii=False))
+            return
+        if args.command in ("requirement-list", "requirement-diagnose", "requirement-sync-status"):
+            from .desktop_view import ReadOnlyStore
+            reader = ReadOnlyStore(args.data_dir)
+            method = getattr(reader, args.command.replace("-", "_"))
+            print(json.dumps(method(args.task_id, args.scope) if args.command == "requirement-list" else method(args.task_id), ensure_ascii=False))
+            return
         if args.command == "doctor":
             print(json.dumps(install_doctor(ROOT, args.data_dir), ensure_ascii=False, indent=2))
             return
@@ -1407,8 +1588,31 @@ def main():
             from .progress import dispatch_check
             print(json.dumps(dispatch_check(ReadOnlyStore(args.data_dir).snapshot(), args.task_id, args.agent_id), ensure_ascii=False))
             return
+        if args.command == "reset-import":
+            store = Store.existing_writer(args.data_dir)
+            if args.file.is_symlink():
+                raise ValueError("Reset import requires a regular nonsymlink file")
+            fd = os.open(args.file, os.O_RDONLY | os.O_NOFOLLOW)
+            with os.fdopen(fd, "rb") as source:
+                metadata = os.fstat(source.fileno())
+                if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 2 * 1024 * 1024:
+                    raise ValueError("Reset import requires a regular file up to 2 MiB")
+                raw = source.read(2 * 1024 * 1024 + 1)
+                if len(raw) > 2 * 1024 * 1024:
+                    raise ValueError("Reset import exceeds 2 MiB")
+            print(json.dumps(store.reset_import(json.loads(raw.decode("utf-8")), expected_identity=args.expected_identity), ensure_ascii=False))
+            return
         store = Store(args.data_dir)
-        if args.command == "serve":
+        if args.command == "reset-bind":
+            print(json.dumps(store.reset_bind(args.expected_identity, args.evidence), ensure_ascii=False))
+        elif args.command == "followup-checkpoint":
+            fields = vars(args).copy(); fields.pop("command"); fields.pop("data_dir")
+            print(json.dumps(store.followup_checkpoint(**fields), ensure_ascii=False))
+        elif args.command.startswith("requirement-"):
+            fields = vars(args).copy()
+            fields.pop('command'); fields.pop('data_dir')
+            print(json.dumps(getattr(store, args.command.replace('-', '_'))(**fields), ensure_ascii=False))
+        elif args.command == "serve":
             server = make_server(store, args.port)
             print(f"dots-panel: http://127.0.0.1:{server.server_port} (loopback only)", flush=True)
             try:
@@ -1487,7 +1691,7 @@ def main():
         elif args.command == "agent-observe":
             print(store.agent_observe(args.id,args.status,args.observed_at,args.note,args.note_en))
         elif args.command == "agent-run-assign":
-            print(json.dumps(store.agent_run_assign(args.run_id,args.agent_id,args.work_type)))
+            print(json.dumps(store.agent_run_assign(args.run_id,args.agent_id,args.work_type, **{field:getattr(args,field) for field in ("requested_model","requested_effort","actual_model","actual_effort","config_verification","config_provider","config_observed_at","config_evidence")})))
         elif args.command == "agent-assign":
             print(json.dumps(store.agent_assign(args.task_id,args.agent_id,args.replace,args.work_type)))
         elif args.command == "release-observe":

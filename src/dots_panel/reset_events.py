@@ -110,7 +110,8 @@ def existing_database(path,mode='ro'):
             current=os.stat(path.name,dir_fd=parent,follow_symlinks=False)
             visible=os.stat(path,follow_symlinks=False)
             if not stat.S_ISREG(current.st_mode) or not stat.S_ISREG(visible.st_mode) or (current.st_dev,current.st_ino)!=expected or (visible.st_dev,visible.st_ino)!=expected:raise ValueError('Database path changed during connection')
-        check();db=sqlite3.connect(path.as_uri()+'?mode='+mode,uri=True);db.row_factory=sqlite3.Row;check()
+        from .sqlite_bound import connect_bound
+        check();db=connect_bound(path,expected,mode=mode);db.row_factory=sqlite3.Row;check()
         if mode=='ro':db.execute('PRAGMA query_only=ON')
         db.execute('BEGIN IMMEDIATE' if mode=='rw' else 'BEGIN');check()
         yield db,check
@@ -126,11 +127,18 @@ def existing_database(path,mode='ro'):
 
 
 class ResetStoreMixin:
-    def reset_import(self,events):
+    def reset_import(self,events,expected_identity=None):
         if not isinstance(events,list) or len(events)>10000:raise ValueError('Bounded event list required')
+        if not expected_identity or read_installation_identity(self.directory)!=expected_identity:raise ValueError('Explicit verified installation identity required for reset imports')
         normalized=[normalize_event(e) for e in events]
-        with self.connect() as db:
-            db.execute('BEGIN IMMEDIATE');count=sum(insert_event(db,e) for e in normalized)
+        with existing_database(Path(self.directory)/'db/panel.sqlite3','rw') as (db,check):
+            tables={r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if not {'tasks','runs','artifacts','reset_events','reset_installation_binding'}.issubset(tables):raise ValueError('Existing compatible panel schema required')
+            bound=db.execute('SELECT identity FROM reset_installation_binding WHERE id=1').fetchone()
+            if not bound or bound[0]!=expected_identity:raise ValueError('Explicit database installation binding required')
+            check()
+            if read_installation_identity(self.directory)!=expected_identity:raise ValueError('Installation identity changed during import')
+            count=sum(insert_event(db,e) for e in normalized)
         return {'imported':count,'deduplicated':len(events)-count,'record_only':True}
     def reset_bind(self,expected_identity,evidence):
         if not isinstance(evidence,str) or not evidence.strip() or len(evidence)>2000:raise ValueError('Explicit installation verification evidence required')
@@ -145,3 +153,35 @@ class ResetStoreMixin:
         with existing_database(Path(self.directory)/'db/panel.sqlite3') as (db,check):
             return {'events':read_events(db),'read_only':True,'reset_cause_confirmed':False}
 
+
+
+def monitor_status(directory,now=None):
+    """Read a separately configured observer; a configuration is not a live process."""
+    import time
+    from .reset_monitor import open_dir
+    result={'status':'unknown','reason':'No verified local monitor observation'}
+    try:
+        parent=open_dir(Path(directory)/'config')
+        try:handle=os.open('reset-monitor.json',os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=parent)
+        finally:os.close(parent)
+        with os.fdopen(handle,'rb') as stream:
+            info=os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_mode&0o077 or info.st_size>8192:raise ValueError('Invalid monitor config')
+            config=json.loads(stream.read(8193))
+        if not isinstance(config,dict) or not config.get('state_directory') or not config.get('expected_installation_identity'):raise ValueError('Missing monitor binding')
+        expected=config['expected_installation_identity']
+        if read_installation_identity(directory)!=expected:raise ValueError('Monitor panel identity mismatch')
+        with existing_database(Path(config['state_directory'])/'monitor.sqlite3') as (db,check):
+            source=json.loads(db.execute("SELECT value FROM monitor_state WHERE key='config'").fetchone()[0])
+            if source.get('expected_panel_identity')!=expected:raise ValueError('Monitor source identity mismatch')
+            row=db.execute("SELECT value FROM monitor_state WHERE key='last'").fetchone()
+            if not row:return {**result,'reason':'Configured observer has no recorded sample'}
+            last=json.loads(row[0]);at=last['observed_at'];now=time.time() if now is None else now
+            age=now-at;healthy=0<=age<=source['interval']*2.5
+            return {'status':'recent_observation' if healthy else 'stale','last_observed_at':at,
+                    'last_observed_at_utc':datetime.fromtimestamp(at,timezone.utc).isoformat(),
+                    'last_observed_at_beijing':datetime.fromtimestamp(at,ZoneInfo('Asia/Shanghai')).isoformat(),
+                    'interval_seconds':source['interval'],'path_count':len(source['paths']),
+                    'process_running':'not_inferred','reason':'Recent recorded sample; no permanence guarantee' if healthy else 'No recent sample; monitor execution is unconfirmed'}
+    except FileNotFoundError:return result
+    except (OSError,ValueError,TypeError,KeyError,sqlite3.Error):return {**result,'reason':'Monitor state or binding could not be safely verified'}

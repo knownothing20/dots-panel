@@ -73,9 +73,11 @@ def _migrate(db):
             continue
         key = 'legacy-' + hashlib.sha256((row['run_id']+'\0'+row['agent_id']).encode()).hexdigest()[:24]
         ended = None if row['status'] in OPEN else max(row['assigned_at'], row['finished'] or row['assigned_at'])
-        db.execute('INSERT INTO assignment_episodes VALUES(?,?,?,?,?,?,?,?)',
+        db.execute('INSERT INTO assignment_episodes(id,run_id,agent_id,work_type,assigned_at,ended_at,end_reason,provenance) VALUES(?,?,?,?,?,?,?,?)',
                    (key,row['run_id'],row['agent_id'],row['work_type'],row['assigned_at'],ended,
                     'Legacy terminal association' if ended is not None else '', 'legacy_snapshot'))
+    from .execution_config import migrate as migrate_config
+    migrate_config(db)
 
 
 def validate_structure(db, task_id, kind, mode, parent):
@@ -118,10 +120,11 @@ def attribute(db, row_kind, row_id, context):
     # A full panel-local ID is collision-free and explicitly not a platform ID.
     from .agent_identity import profile_short_ids
     short_id = profile_short_ids([dict(r) for r in db.execute('SELECT id FROM agents')])[context['agent_id']]
-    db.execute('INSERT INTO event_attributions(row_kind,row_id,run_id,agent_id,assignment_id,work_type,actor_name,actor_name_en,portrait,actor_display_id,color_key,recorded_at,actor_short_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    db.execute('INSERT INTO event_attributions(row_kind,row_id,run_id,agent_id,assignment_id,work_type,actor_name,actor_name_en,portrait,actor_display_id,color_key,recorded_at,actor_short_id,execution_config_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
         (row_kind,row_id,context['run_id'],context['agent_id'],context['id'],context['work_type'],
          context['name'],context['name_en'],context['portrait'] or '',context['agent_id'],
-         hashlib.sha256(context['agent_id'].encode()).hexdigest()[:8],time.time(),short_id))
+         hashlib.sha256(context['agent_id'].encode()).hexdigest()[:8],time.time(),short_id,
+         json.dumps(__import__(__package__+'.execution_config',fromlist=['config_from_row']).config_from_row(context),sort_keys=True)))
 
 
 def decorate(rows, attributions, kind):
@@ -130,6 +133,8 @@ def decorate(rows, attributions, kind):
         attribution = lookup.get((kind,row['id']))
         row['attribution'] = dict(attribution) if attribution else None
         row['attribution_state'] = 'recorded' if attribution else 'historical_unattributed'
+        if attribution:
+            row['attribution']['execution_config'] = json.loads(attribution.get('execution_config_json') or '{}')
         if attribution:
             from .agent_identity import portrait_spec, PORTRAITS
             # Render only the frozen portrait key, never today's mutable profile.
@@ -212,17 +217,26 @@ class CollaborationStoreMixin:
             rows = decorate([dict(r) for r in db.execute('SELECT * FROM activity WHERE task_id IN ('+placeholders+')',ids)],attributions,'activity')
             for r in rows:
                 r.update(kind='activity',key='activity:'+str(r['id']))
+            from .requirements import cards as requirement_cards
+            requirements = [card for selected in ids for card in requirement_cards(db,selected)]
+            linked_event_ids = {str(link['target_id']) for card in requirements for link in card['links'] if link.get('target_type')=='event'}
             mirrors = {(r['task_id'],r['created'],r['message']) for r in rows if not r['attribution']}
             events = decorate([dict(r) for r in db.execute('SELECT e.*,r.task_id FROM events e JOIN runs r ON r.id=e.run_id WHERE r.task_id IN ('+placeholders+')',ids)],attributions,'event')
             for r in events:
-                if not r['attribution'] and (r['task_id'],r['created'],r['message']) in mirrors:
+                if str(r['id']) not in linked_event_ids and not r['attribution'] and (r['task_id'],r['created'],r['message']) in mirrors:
                     continue
                 r.update(kind='event',key='event:'+str(r['id'])); rows.append(r)
+            for card in requirements:
+                rows.append({'id':card['id'],'kind':'requirement','key':'requirement:'+card['id'],
+                             'created':card['observed_at'],'message':card['summary'],'task_id':card['task_id'],
+                             'requirement_id':card['id'],'requirement':card,'attribution':None})
+            for row in rows:
+                row['requirement_refs'] = [card['id'] for card in requirements if any(link.get('target_type')==row['kind'] and str(link.get('target_id'))==str(row['id']) for link in card['links'])]
             if agent_id:
                 rows = [r for r in rows if (r['attribution'] or {}).get('agent_id')==agent_id or agent_id=='unattributed' and not r['attribution']]
             if work_type:
                 rows = [r for r in rows if (r['attribution'] or {}).get('work_type')==work_type or work_type=='unattributed' and not r['attribution']]
-            rows.sort(key=lambda r:(-r['created'],r['kind'],r['id']))
+            rows.sort(key=lambda r:(-r['created'],r['kind'],str(r['id'])))
             total = len(rows)
             return {'task_id':task_id,'rows':rows[offset:offset+limit],'total':total,'offset':offset,'limit':limit,
                     'has_more':offset+limit<total,'source':'manual_records','includes_children':include_children,'record_only':True}

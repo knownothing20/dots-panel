@@ -150,8 +150,8 @@ including SOURCE and DATA themselves; do not rely on the process umask. Restored
 files use their manifest's private modes (0600 or executable SOURCE files 0700).
 
 Inspect the restored application with the matching source version. `doctor` is
-read-only; `status` may migrate older databases, so run compatibility checks on
-an isolated copy and record any changes. Never run recovered PID files. Validate
+read-only; `status` also reads without migration. Explicit `init` may migrate
+older databases, so test it on an isolated copy and record any changes. Never run recovered PID files. Validate
 the UI separately when a desktop is available. Obtain explicit user approval
 before changing the production launcher or switching active DATA.
 
